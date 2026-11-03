@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Git Graph">
+  <defs>
+    <linearGradient id="gv-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1f4f8f"/>
+      <stop offset="1" stop-color="#132a4a"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#gv-bg)"/>
+  <g fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round">
+    <path d="M20 16v32"/>
+    <path d="M20 30c0 8 5 10 12 10h3"/>
+    <path d="M20 22c0 7 7 8 14 8"/>
+  </g>
+  <g fill="#ffffff">
+    <circle cx="20" cy="14" r="5"/>
+    <circle cx="20" cy="50" r="5"/>
+    <circle cx="41" cy="24" r="5"/>
+    <circle cx="41" cy="40" r="5"/>
+  </g>
+  <circle cx="41" cy="24" r="2.4" fill="#4da3ff"/>
+  <circle cx="41" cy="40" r="2.4" fill="#f0b429"/>
+</svg>

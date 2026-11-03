@@ -1,0 +1,37 @@
+{
+  "name": "@local/dsh-git-view",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "IntelliJ-style Git panel: file tree, commit graph, branch operations, side-by-side diffs, partial or AI-assisted commits, and state-aware discard.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wangs-haha/dsh-git-view-plugin.git"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "git-data.js",
+    "git-ops.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}

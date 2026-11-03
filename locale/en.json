@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Git Graph",
+    "description": "Browse commits and diffs, manage branches, commit selected files, and discard changes by state in an IntelliJ-style Git panel."
+  }
+}

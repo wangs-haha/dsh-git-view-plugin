@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Git 提交图",
+    "description": "以 IntelliJ 风格的 Git 面板浏览提交与差异，管理分支、部分提交与按状态撤回工作区更改。"
+  }
+}
