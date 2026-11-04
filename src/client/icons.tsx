@@ -515,3 +515,37 @@ export function FileIcon({ name, isDir = false, open = false, size = 13 }: FileI
   )
 }
 
+/** Flat-list layout: three aligned rows. */
+export function IconList({ size = 13 }: IconProps): React.ReactElement {
+  return h(
+    'svg',
+    { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': true },
+    h('path', {
+      d: 'M8 6h12M8 12h12M8 18h12',
+      stroke: 'currentColor',
+      strokeWidth: 1.8,
+      strokeLinecap: 'round',
+    }),
+    h('circle', { cx: 4.2, cy: 6, r: 1, fill: 'currentColor' }),
+    h('circle', { cx: 4.2, cy: 12, r: 1, fill: 'currentColor' }),
+    h('circle', { cx: 4.2, cy: 18, r: 1, fill: 'currentColor' }),
+  )
+}
+
+/** Directory-tree layout: one parent with two indented children. */
+export function IconTree({ size = 13 }: IconProps): React.ReactElement {
+  return h(
+    'svg',
+    { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': true },
+    h('path', {
+      d: 'M5 5.5v9A2.5 2.5 0 0 0 7.5 17H11M5 11h4',
+      stroke: 'currentColor',
+      strokeWidth: 1.6,
+      strokeLinecap: 'round',
+    }),
+    h('rect', { x: 2.8, y: 3.2, width: 4.4, height: 4.4, rx: 1.2, stroke: 'currentColor', strokeWidth: 1.5 }),
+    h('rect', { x: 11.2, y: 8.8, width: 9.6, height: 4.4, rx: 1.2, stroke: 'currentColor', strokeWidth: 1.5 }),
+    h('rect', { x: 11.2, y: 15.2, width: 7, height: 4.4, rx: 1.2, stroke: 'currentColor', strokeWidth: 1.5 }),
+  )
+}
+

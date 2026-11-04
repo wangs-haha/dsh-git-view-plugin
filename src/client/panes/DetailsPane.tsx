@@ -5,6 +5,7 @@
 import * as React from 'react'
 import { fullDate, historyHintKey, statusClass, statusLabel } from '../format.js'
 import { FileIcon, IconCompare, IconCopy, IconGraphMark } from '../icons.js'
+import { ErrorState } from '../ui/ErrorState.js'
 import { Spinner } from '../ui/Spinner.js'
 import type { CommitDetails, CommitFile, CommitRow, Translate } from '../types.js'
 import { RefChip } from './CommitPane.js'
@@ -47,12 +48,7 @@ export function DetailsPane(props: DetailsPaneProps): React.ReactElement {
       h('div', null, t('selectCommit')),
     )
   } else if (error) {
-    body = h(
-      'div',
-      { className: 'gv-details-error' },
-      h('div', { className: 'gv-state-title' }, t('errorTitle')),
-      h('div', { className: 'gv-state-text' }, error),
-    )
+    body = h('div', { className: 'gv-details-error' }, h(ErrorState, { t, message: error }))
   } else if (details) {
     const isHead = Boolean(headHash) && details.hash === headHash
     const isMerge = Array.isArray(details.parents) && details.parents.length > 1

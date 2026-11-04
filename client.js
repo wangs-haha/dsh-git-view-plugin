@@ -42,9 +42,10 @@ window.__ModuleLoader__.load({
       inject: () => inject
     });
     module.exports = __toCommonJS(index_exports);
+    var React18 = __toESM(require("react"), 1);
 
     // src/client/app.tsx
-    var React14 = __toESM(require("react"), 1);
+    var React16 = __toESM(require("react"), 1);
 
     // src/client/api.ts
     var DEFAULT_BASE = "api/git-view";
@@ -170,7 +171,7 @@ window.__ModuleLoader__.load({
     var TABLE_CHROME_WIDTH = COLUMNS.author + COLUMNS.date + COLUMNS.hash + COLUMN_GAP * 3 + ROW_PADDING_X * 2;
 
     // src/client/layout.ts
-    var MIN_LEFT = 208;
+    var MIN_LEFT = 232;
     var MAX_LEFT = 460;
     var MIN_RIGHT = 240;
     var MAX_RIGHT = 660;
@@ -227,6 +228,21 @@ window.__ModuleLoader__.load({
       writeRepo(id) {
         try {
           if (id) this.storage?.setItem(REPO_KEY, id);
+        } catch {
+        }
+      }
+      /** Last picked changes layout: flat list (default) or directory tree. */
+      readChangesView() {
+        try {
+          return this.storage?.getItem(`${KEY_PREFIX}.changesView`) === "tree" ? "tree" : "list";
+        } catch {
+          return "list";
+        }
+      }
+      /** Persist the changes layout. */
+      writeChangesView(view) {
+        try {
+          this.storage?.setItem(`${KEY_PREFIX}.changesView`, view);
         } catch {
         }
       }
@@ -781,6 +797,99 @@ window.__ModuleLoader__.load({
         glyphs
       );
     }
+    function IconList({ size = 13 }) {
+      return h(
+        "svg",
+        { width: size, height: size, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+        h("path", {
+          d: "M8 6h12M8 12h12M8 18h12",
+          stroke: "currentColor",
+          strokeWidth: 1.8,
+          strokeLinecap: "round"
+        }),
+        h("circle", { cx: 4.2, cy: 6, r: 1, fill: "currentColor" }),
+        h("circle", { cx: 4.2, cy: 12, r: 1, fill: "currentColor" }),
+        h("circle", { cx: 4.2, cy: 18, r: 1, fill: "currentColor" })
+      );
+    }
+    function IconTree({ size = 13 }) {
+      return h(
+        "svg",
+        { width: size, height: size, viewBox: "0 0 24 24", fill: "none", "aria-hidden": true },
+        h("path", {
+          d: "M5 5.5v9A2.5 2.5 0 0 0 7.5 17H11M5 11h4",
+          stroke: "currentColor",
+          strokeWidth: 1.6,
+          strokeLinecap: "round"
+        }),
+        h("rect", { x: 2.8, y: 3.2, width: 4.4, height: 4.4, rx: 1.2, stroke: "currentColor", strokeWidth: 1.5 }),
+        h("rect", { x: 11.2, y: 8.8, width: 9.6, height: 4.4, rx: 1.2, stroke: "currentColor", strokeWidth: 1.5 }),
+        h("rect", { x: 11.2, y: 15.2, width: 7, height: 4.4, rx: 1.2, stroke: "currentColor", strokeWidth: 1.5 })
+      );
+    }
+
+    // src/client/errors.ts
+    var MAX_DETAIL = 4e3;
+    function clampDetail(text) {
+      return text.length > MAX_DETAIL ? `${text.slice(0, MAX_DETAIL)}
+    …` : text;
+    }
+    function stackOf(error) {
+      if (error instanceof Error && error.stack) return error.stack;
+      return "";
+    }
+    function normalizeError(error) {
+      if (isAbort(error)) {
+        return { kind: "abort", message: "", detail: "", status: null };
+      }
+      if (error instanceof GitApiError) {
+        const kind = error.status === 401 || error.status === 403 ? "auth" : error.conflict ? "conflict" : "git";
+        const detail = [`HTTP ${error.status}`, error.conflict ? "conflict=true" : "", stackOf(error)].filter(Boolean).join("\n");
+        return { kind, message: error.message || `HTTP ${error.status}`, detail: clampDetail(detail), status: error.status };
+      }
+      if (error instanceof TypeError && /fetch|network|load failed|failed to fetch/i.test(error.message)) {
+        return {
+          kind: "network",
+          message: error.message,
+          detail: clampDetail(stackOf(error) || error.message),
+          status: null
+        };
+      }
+      const message = errorText(error) || String(error);
+      return {
+        kind: "unknown",
+        message,
+        detail: clampDetail([message, stackOf(error)].filter(Boolean).join("\n")),
+        status: null
+      };
+    }
+    function isPluginError(value) {
+      const text = typeof value === "string" ? value : value instanceof Error ? `${value.message}
+    ${value.stack || ""}` : String(value);
+      return /@local\/dsh-git-view|dsh-git-view\/client\.js/i.test(text);
+    }
+    function errorTitleKey(context) {
+      switch (context) {
+        case "commit":
+          return "errorCommit";
+        case "branch":
+          return "errorBranch";
+        case "remote":
+          return "errorRemote";
+        case "history":
+          return "errorHistory";
+        case "discard":
+          return "errorDiscard";
+        case "rollback":
+          return "errorRollback";
+        case "ai":
+          return "errorAi";
+        case "read":
+          return "errorRead";
+        default:
+          return "errorTitle";
+      }
+    }
 
     // src/client/notices.ts
     var NoticeCenter = class {
@@ -789,18 +898,35 @@ window.__ModuleLoader__.load({
         __publicField(this, "timer", null);
         __publicField(this, "listeners", /* @__PURE__ */ new Set());
         __publicField(this, "durationMs");
+        __publicField(this, "sequence", 0);
         this.durationMs = durationMs;
       }
       /** Current notice, if any. */
       get current() {
         return this.notice;
       }
-      /** Replace the notice and restart the dismiss timer. */
-      show(text, kind = "ok") {
-        if (!text) return;
-        this.notice = { text, kind };
+      /**
+       * Replace the notice and restart the dismiss timer.
+       * @param text - user-facing message.
+       * @param kind - success or error.
+       * @param options - title, technical detail, sticky override.
+       */
+      show(text, kind = "ok", options = {}) {
+        if (!text && !options.title) return;
+        this.sequence += 1;
+        this.notice = {
+          text,
+          kind,
+          title: options.title,
+          detail: options.detail,
+          sticky: options.sticky ?? kind === "error",
+          at: this.sequence
+        };
         if (this.timer) clearTimeout(this.timer);
-        this.timer = setTimeout(() => this.clear(), this.durationMs);
+        this.timer = null;
+        if (!this.notice.sticky) {
+          this.timer = setTimeout(() => this.clear(), this.durationMs);
+        }
         this.emit();
       }
       /** Dismiss immediately. */
@@ -893,7 +1019,7 @@ window.__ModuleLoader__.load({
     };
 
     // src/client/selfcheck.ts
-    var BUILD_MARKER = true ? "mw1vyqf3-vhrj" : "";
+    var BUILD_MARKER = true ? "mw1wrr3l-avu4" : "";
     var PLUGIN_ID = true ? "@local/dsh-git-view" : "@local/dsh-git-view";
     var GUARD_PREFIX = "dsh.git-view.selfcheck.";
     var DEFAULT_TIMEOUT_MS = 5e3;
@@ -1300,6 +1426,16 @@ window.__ModuleLoader__.load({
     .gv-repo-notice-ok{color:var(--gv-ok-fg);background:var(--gv-ok-tint)}
     .gv-repo-notice-error{color:var(--gv-danger-fg);background:var(--gv-danger-tint);max-height:110px;overflow:auto}
     .gv-changes-list{flex:1;min-height:0;overflow:auto;padding:4px}
+    .gv-changes-list-tree{padding:3px 4px 6px}
+    .gv-change-dir-row{display:flex;align-items:center;gap:5px;min-width:0;min-height:24px;padding:2px 5px;border-radius:var(--gv-r-xs);color:var(--gv-text-muted);font-size:var(--gv-fs-sm);font-weight:500;cursor:pointer;outline:none;user-select:none;transition:background var(--gv-dur) var(--gv-ease)}
+    .gv-change-dir-row:hover{background:var(--gv-hover)}
+    .gv-change-dir-row:focus-visible{outline:2px solid var(--gv-accent);outline-offset:-2px}
+    .gv-change-dir-chevron{display:inline-flex;flex:none;color:var(--gv-text-muted);transition:transform var(--gv-dur) var(--gv-ease)}
+    .gv-change-dir-chevron-open{transform:rotate(90deg)}
+    .gv-change-dir-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--gv-text)}
+    .gv-change-dir-count{margin-left:auto;flex:none;font-size:var(--gv-fs-xs);color:var(--gv-text-muted);font-variant-numeric:tabular-nums}
+    .gv-change-row-tree{min-height:26px}
+    .gv-view-toggle[aria-pressed="true"]{border-color:var(--gv-accent-border);background:var(--gv-accent-tint);color:var(--gv-accent-fg)}
     .gv-change-row{display:flex;align-items:center;gap:6px;min-width:0;min-height:var(--gv-row-change);padding:4px 5px;border-radius:var(--gv-r-sm);cursor:pointer;outline:none;transition:background var(--gv-dur) var(--gv-ease)}
     .gv-change-row:hover{background:var(--gv-hover)}
     .gv-change-row:focus-visible{outline:2px solid var(--gv-accent);outline-offset:-2px}
@@ -1446,7 +1582,36 @@ window.__ModuleLoader__.load({
     .gv-details-body{flex:1;min-height:0;overflow:auto;padding:12px 16px 16px}
     .gv-details-empty{display:flex;flex-direction:column;align-items:center;gap:10px;padding:48px 14px;text-align:center;color:var(--gv-text-muted);font-size:var(--gv-fs-md);line-height:1.6}
     .gv-details-empty-icon{opacity:.6}
-    .gv-details-error{display:flex;flex-direction:column;gap:6px;padding:12px;border:1px solid var(--gv-danger-border);border-radius:var(--gv-r-md);background:var(--gv-danger-tint)}
+    .gv-details-error{display:flex;flex-direction:column;gap:6px;padding:8px}
+
+    /* --------------------------------------------------------- error surfaces */
+    .gv-error-state{display:flex;align-items:flex-start;gap:8px;padding:10px;border:1px solid var(--gv-danger-border);border-left:3px solid var(--gv-danger);border-radius:var(--gv-r-md);background:var(--gv-danger-tint);color:var(--gv-text);max-width:100%}
+    .gv-error-state-compact{padding:8px;gap:7px}
+    .gv-error-state-icon{flex:none;display:inline-flex;margin-top:1px;color:var(--gv-danger-fg)}
+    .gv-error-state-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+    .gv-error-state-title{font-size:var(--gv-fs-sm);font-weight:600;color:var(--gv-danger-fg)}
+    .gv-error-state-text{font-size:var(--gv-fs-xs);line-height:1.45;color:var(--gv-text-muted);overflow-wrap:anywhere}
+    .gv-error-state-retry{flex:none;align-self:flex-start}
+    .gv-alert{flex:none;display:flex;align-items:flex-start;gap:9px;padding:9px 10px;border-bottom:1px solid var(--gv-danger-border);background:var(--gv-danger-tint);color:var(--gv-text);box-shadow:inset 3px 0 0 var(--gv-danger)}
+    .gv-alert-icon{flex:none;display:inline-flex;margin-top:1px;color:var(--gv-danger-fg)}
+    .gv-alert-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+    .gv-alert-title{font-size:var(--gv-fs-sm);font-weight:600;color:var(--gv-danger-fg)}
+    .gv-alert-text{font-size:var(--gv-fs-xs);line-height:1.45;color:var(--gv-text);overflow-wrap:anywhere}
+    .gv-alert-detail{margin-top:2px;font-size:var(--gv-fs-xs);color:var(--gv-text-muted)}
+    .gv-alert-detail summary{width:max-content;cursor:pointer;color:var(--gv-text-muted);user-select:none}
+    .gv-alert-detail summary:focus-visible{outline:2px solid var(--gv-accent);outline-offset:2px}
+    .gv-alert-detail pre{margin:4px 0 0;padding:6px 8px;max-height:120px;overflow:auto;border:1px solid var(--gv-border);border-radius:var(--gv-r-xs);background:var(--gv-bg);font-family:var(--gv-mono);font-size:var(--gv-fs-xs);line-height:1.4;white-space:pre-wrap;overflow-wrap:anywhere}
+    .gv-alert-actions{flex:none;display:flex;gap:2px}
+    .gv-alert-action{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:0;border-radius:var(--gv-r-xs);background:transparent;color:var(--gv-danger-fg);cursor:pointer;transition:background var(--gv-dur) var(--gv-ease)}
+    .gv-alert-action:hover{background:color-mix(in srgb,var(--gv-danger) 18%,transparent)}
+    .gv-alert-action:focus-visible{outline:2px solid var(--gv-accent);outline-offset:0}
+    .gv-crash{display:flex;align-items:center;justify-content:center;padding:24px;background:var(--gv-bg)}
+    .gv-crash-card{display:flex;flex-direction:column;align-items:flex-start;gap:10px;width:min(560px,100%);padding:20px;border:1px solid var(--gv-danger-border);border-radius:var(--gv-r-lg);background:var(--gv-surface-pop);box-shadow:var(--gv-shadow-modal)}
+    .gv-crash-icon{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:var(--gv-r-pill);background:var(--gv-danger-tint);color:var(--gv-danger-fg)}
+    .gv-crash-title{font-size:var(--gv-fs-xl);font-weight:600;color:var(--gv-text)}
+    .gv-crash-text{font-size:var(--gv-fs-md);line-height:1.55;color:var(--gv-text-muted)}
+    .gv-crash-detail{width:100%;max-height:180px;margin:0;padding:8px 10px;overflow:auto;border:1px solid var(--gv-border);border-radius:var(--gv-r-sm);background:var(--gv-bg);font-family:var(--gv-mono);font-size:var(--gv-fs-xs);line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--gv-text-muted)}
+    .gv-crash-actions{display:flex;gap:8px;flex-wrap:wrap}
     .gv-detail-hashrow{display:flex;align-items:center;gap:6px}
     .gv-detail-hash{font-family:var(--gv-mono);font-size:var(--gv-fs-md);color:var(--gv-text);background:var(--gv-surface-2);border-radius:var(--gv-r-xs);padding:2px 6px}
     .gv-copy{width:var(--gv-ctl-sm);height:var(--gv-ctl-sm)}
@@ -1683,13 +1848,108 @@ window.__ModuleLoader__.load({
       );
     }
 
-    // src/client/ui/PopupMenu.tsx
+    // src/client/ui/ErrorNotice.tsx
     var React3 = __toESM(require("react"), 1);
-    var ReactDOM2 = __toESM(require("react-dom"), 1);
     var h3 = React3.createElement;
+    function ErrorNotice({ t, notice, onClose }) {
+      const [copied, setCopied] = React3.useState(false);
+      const timer = React3.useRef(null);
+      React3.useEffect(
+        () => () => {
+          if (timer.current) clearTimeout(timer.current);
+        },
+        []
+      );
+      const copy = () => {
+        const text = [notice.title, notice.text, notice.detail].filter(Boolean).join("\n\n");
+        try {
+          void navigator.clipboard.writeText(text).then(() => {
+            setCopied(true);
+            if (timer.current) clearTimeout(timer.current);
+            timer.current = setTimeout(() => setCopied(false), 1600);
+          }).catch(() => void 0);
+        } catch {
+        }
+      };
+      return h3(
+        "div",
+        { className: "gv-alert gv-alert-error", role: "alert", "aria-live": "assertive" },
+        h3("span", { className: "gv-alert-icon", "aria-hidden": true }, h3(IconAlert, { size: 15 })),
+        h3(
+          "div",
+          { className: "gv-alert-body" },
+          h3("div", { className: "gv-alert-title" }, notice.title || t("errorTitle")),
+          notice.text ? h3("div", { className: "gv-alert-text" }, notice.text) : null,
+          notice.detail ? h3(
+            "details",
+            { className: "gv-alert-detail" },
+            h3("summary", null, t("errorDetail")),
+            h3("pre", null, notice.detail)
+          ) : null
+        ),
+        h3(
+          "div",
+          { className: "gv-alert-actions" },
+          h3(
+            "button",
+            {
+              type: "button",
+              className: "gv-alert-action",
+              title: copied ? t("copiedDetails") : t("copyDetails"),
+              "aria-label": copied ? t("copiedDetails") : t("copyDetails"),
+              onClick: copy
+            },
+            copied ? h3(IconCheck, { size: 12 }) : h3(IconCopy, { size: 12 })
+          ),
+          h3(
+            "button",
+            {
+              type: "button",
+              className: "gv-alert-action",
+              title: t("close"),
+              "aria-label": t("close"),
+              onClick: onClose
+            },
+            h3(IconClose, { size: 12 })
+          )
+        )
+      );
+    }
+
+    // src/client/ui/ErrorState.tsx
+    var React4 = __toESM(require("react"), 1);
+    var h4 = React4.createElement;
+    function ErrorState({ t, message, onRetry, compact = false }) {
+      return h4(
+        "div",
+        { className: `gv-error-state${compact ? " gv-error-state-compact" : ""}`, role: "alert" },
+        h4("span", { className: "gv-error-state-icon", "aria-hidden": true }, h4(IconAlert, { size: compact ? 14 : 16 })),
+        h4(
+          "div",
+          { className: "gv-error-state-body" },
+          h4("div", { className: "gv-error-state-title" }, t("errorTitle")),
+          h4("div", { className: "gv-error-state-text" }, message)
+        ),
+        onRetry ? h4(
+          "button",
+          {
+            type: "button",
+            className: "gv-button gv-button-xs gv-error-state-retry",
+            onClick: onRetry
+          },
+          h4(IconRefresh, { size: 11 }),
+          h4("span", null, t("retry"))
+        ) : null
+      );
+    }
+
+    // src/client/ui/PopupMenu.tsx
+    var React5 = __toESM(require("react"), 1);
+    var ReactDOM2 = __toESM(require("react-dom"), 1);
+    var h5 = React5.createElement;
     function PopupMenu({ t, menu, onClose }) {
-      const ref = React3.useRef(null);
-      React3.useEffect(() => {
+      const ref = React5.useRef(null);
+      React5.useEffect(() => {
         const onPointerDown = (event) => {
           if (ref.current && !ref.current.contains(event.target)) onClose();
         };
@@ -1711,7 +1971,7 @@ window.__ModuleLoader__.load({
       const left = Math.max(8, Math.min(menu.x, window.innerWidth - width - 8));
       const top = Math.max(8, Math.min(menu.y, window.innerHeight - height - 8));
       return ReactDOM2.createPortal(
-        h3(
+        h5(
           "div",
           {
             className: "gv-menu",
@@ -1722,7 +1982,7 @@ window.__ModuleLoader__.load({
             onMouseDown: (event) => event.stopPropagation()
           },
           menu.items.map(
-            (item, index) => item.separator ? h3("div", { key: `sep-${index}`, className: "gv-menu-sep", role: "separator" }) : h3(
+            (item, index) => item.separator ? h5("div", { key: `sep-${index}`, className: "gv-menu-sep", role: "separator" }) : h5(
               "button",
               {
                 key: item.id || `item-${index}`,
@@ -1736,8 +1996,8 @@ window.__ModuleLoader__.load({
                   item.onSelect?.();
                 }
               },
-              h3("span", { className: "gv-menu-label" }, item.label),
-              item.hint ? h3("span", { className: "gv-menu-hint" }, item.hint) : null
+              h5("span", { className: "gv-menu-label" }, item.label),
+              item.hint ? h5("span", { className: "gv-menu-hint" }, item.hint) : null
             )
           )
         ),
@@ -1746,8 +2006,8 @@ window.__ModuleLoader__.load({
     }
 
     // src/client/ui/ResizeHandle.tsx
-    var React4 = __toESM(require("react"), 1);
-    var h4 = React4.createElement;
+    var React6 = __toESM(require("react"), 1);
+    var h6 = React6.createElement;
     function ResizeHandle({
       label,
       value,
@@ -1759,9 +2019,9 @@ window.__ModuleLoader__.load({
       onCommit,
       onReset
     }) {
-      const [dragging, setDragging] = React4.useState(false);
-      const startRef = React4.useRef(null);
-      const latestRef = React4.useRef(value);
+      const [dragging, setDragging] = React6.useState(false);
+      const startRef = React6.useRef(null);
+      const latestRef = React6.useRef(value);
       latestRef.current = value;
       const rows = axis === "y";
       const clampValue = (next) => Math.min(max, Math.max(min, Math.round(next)));
@@ -1772,7 +2032,7 @@ window.__ModuleLoader__.load({
         if (onCommit) onCommit(latestRef.current);
       };
       const position = (event) => rows ? event.clientY : event.clientX;
-      return h4(
+      return h6(
         "div",
         {
           className: `gv-split${rows ? " gv-split-row" : ""}${dragging ? " gv-split-active" : ""}`,
@@ -1815,14 +2075,14 @@ window.__ModuleLoader__.load({
             if (onCommit) onCommit(next);
           }
         },
-        h4("span", { className: "gv-split-grip", "aria-hidden": true })
+        h6("span", { className: "gv-split-grip", "aria-hidden": true })
       );
     }
 
     // src/client/ui/RollbackDialog.tsx
-    var React5 = __toESM(require("react"), 1);
+    var React7 = __toESM(require("react"), 1);
     var ReactDOM3 = __toESM(require("react-dom"), 1);
-    var h5 = React5.createElement;
+    var h7 = React7.createElement;
     function RollbackDialog({
       t,
       entries,
@@ -1831,10 +2091,10 @@ window.__ModuleLoader__.load({
       onClose,
       onConfirm
     }) {
-      const [checked, setChecked] = React5.useState(() => new Set(entries.map((entry) => entry.path)));
-      const [deleteAdded, setDeleteAdded] = React5.useState(true);
-      const confirmRef = React5.useRef(null);
-      React5.useEffect(() => {
+      const [checked, setChecked] = React7.useState(() => new Set(entries.map((entry) => entry.path)));
+      const [deleteAdded, setDeleteAdded] = React7.useState(true);
+      const confirmRef = React7.useRef(null);
+      React7.useEffect(() => {
         if (confirmRef.current && typeof confirmRef.current.focus === "function") confirmRef.current.focus();
         const onKeyDown = (event) => {
           if (event.key === "Escape" && !busy) {
@@ -1861,7 +2121,7 @@ window.__ModuleLoader__.load({
       const allChecked = entries.length > 0 && checked.size === entries.length;
       const paths = entries.filter((entry) => checked.has(entry.path)).map((entry) => entry.path);
       return ReactDOM3.createPortal(
-        h5(
+        h7(
           "div",
           {
             className: "gv-modal-mask gv-dialog-mask",
@@ -1869,14 +2129,14 @@ window.__ModuleLoader__.load({
               if (event.target === event.currentTarget && !busy) onClose();
             }
           },
-          h5(
+          h7(
             "div",
             { className: "gv-dialog gv-dialog-wide", role: "dialog", "aria-modal": "true", "aria-label": t("rollbackTitle") },
-            h5(
+            h7(
               "div",
               { className: "gv-dialog-head" },
-              h5("span", { className: "gv-dialog-title" }, t("rollbackTitle")),
-              h5(
+              h7("span", { className: "gv-dialog-title" }, t("rollbackTitle")),
+              h7(
                 "button",
                 {
                   type: "button",
@@ -1886,60 +2146,60 @@ window.__ModuleLoader__.load({
                   disabled: busy,
                   onClick: onClose
                 },
-                h5(IconClose, { size: 13 })
+                h7(IconClose, { size: 13 })
               )
             ),
-            h5(
+            h7(
               "div",
               { className: "gv-dialog-body" },
-              h5("p", { className: "gv-dialog-text" }, t("rollbackHint")),
-              h5(
+              h7("p", { className: "gv-dialog-text" }, t("rollbackHint")),
+              h7(
                 "label",
                 { className: "gv-dialog-check" },
-                h5("input", {
+                h7("input", {
                   type: "checkbox",
                   checked: allChecked,
                   disabled: busy || entries.length === 0,
                   onChange: () => setChecked(allChecked ? /* @__PURE__ */ new Set() : new Set(entries.map((entry) => entry.path)))
                 }),
-                h5("span", null, `${t("selectAll")} · ${checked.size}/${entries.length}`)
+                h7("span", null, `${t("selectAll")} · ${checked.size}/${entries.length}`)
               ),
-              h5(
+              h7(
                 "div",
                 { className: "gv-rollback-list" },
                 entries.map(
-                  (entry) => h5(
+                  (entry) => h7(
                     "label",
                     { key: entry.path, className: "gv-rollback-row" },
-                    h5("input", {
+                    h7("input", {
                       type: "checkbox",
                       checked: checked.has(entry.path),
                       disabled: busy,
                       onChange: () => toggle(entry.path)
                     }),
-                    h5("span", { className: `gv-status ${statusClass(entry.status)}` }, entry.status || "?"),
-                    h5("span", { className: "gv-rollback-path", title: entry.path }, entry.path)
+                    h7("span", { className: `gv-status ${statusClass(entry.status)}` }, entry.status || "?"),
+                    h7("span", { className: "gv-rollback-path", title: entry.path }, entry.path)
                   )
                 )
               ),
-              h5(
+              h7(
                 "label",
                 { className: "gv-dialog-check" },
-                h5("input", {
+                h7("input", {
                   type: "checkbox",
                   checked: deleteAdded,
                   disabled: busy,
                   onChange: (event) => setDeleteAdded(event.target.checked)
                 }),
-                h5("span", null, t("rollbackDeleteAdded"))
+                h7("span", null, t("rollbackDeleteAdded"))
               ),
-              error ? h5("div", { className: "gv-dialog-error" }, error) : null
+              error ? h7("div", { className: "gv-dialog-error" }, error) : null
             ),
-            h5(
+            h7(
               "div",
               { className: "gv-dialog-actions" },
-              h5("button", { type: "button", className: "gv-button gv-button-ghost", onClick: onClose, disabled: busy }, t("cancel")),
-              h5(
+              h7("button", { type: "button", className: "gv-button gv-button-ghost", onClick: onClose, disabled: busy }, t("cancel")),
+              h7(
                 "button",
                 {
                   type: "button",
@@ -1948,8 +2208,8 @@ window.__ModuleLoader__.load({
                   disabled: busy || paths.length === 0,
                   onClick: () => onConfirm(paths, deleteAdded)
                 },
-                busy ? h5("span", { className: "gv-inline-spin", "aria-hidden": true }) : null,
-                h5("span", null, `${t("rollbackConfirm")} · ${paths.length}`)
+                busy ? h7("span", { className: "gv-inline-spin", "aria-hidden": true }) : null,
+                h7("span", null, `${t("rollbackConfirm")} · ${paths.length}`)
               )
             )
           )
@@ -1959,20 +2219,90 @@ window.__ModuleLoader__.load({
     }
 
     // src/client/ui/Spinner.tsx
-    var React6 = __toESM(require("react"), 1);
-    var h6 = React6.createElement;
+    var React8 = __toESM(require("react"), 1);
+    var h8 = React8.createElement;
     function Spinner({ label }) {
-      return h6(
+      return h8(
         "div",
         { className: "gv-loading" },
-        h6("span", { className: "gv-spinner", "aria-hidden": true }),
-        h6("span", null, label)
+        h8("span", { className: "gv-spinner", "aria-hidden": true }),
+        h8("span", null, label)
       );
     }
 
     // src/client/panes/ChangesPane.tsx
-    var React7 = __toESM(require("react"), 1);
-    var h7 = React7.createElement;
+    var React9 = __toESM(require("react"), 1);
+
+    // src/client/panes/change-tree.ts
+    function makeDir(name, path) {
+      return { name, path, dirs: [], files: [], total: 0 };
+    }
+    function byName(a, b) {
+      return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+    }
+    function finalize(node) {
+      node.dirs.sort(byName);
+      node.files.sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+      for (const dir of node.dirs) finalize(dir);
+      node.total = node.files.length + node.dirs.reduce((count, dir) => count + dir.total, 0);
+    }
+    function buildChangeTree(entries) {
+      const root = makeDir("", "");
+      for (const entry of entries) {
+        const parts = entry.path.split("/").filter(Boolean);
+        let node = root;
+        let path = "";
+        for (let index = 0; index < parts.length - 1; index += 1) {
+          path = path ? `${path}/${parts[index]}` : parts[index];
+          let next = node.dirs.find((dir) => dir.name === parts[index]);
+          if (!next) {
+            next = makeDir(parts[index], path);
+            node.dirs.push(next);
+          }
+          node = next;
+        }
+        node.files.push(entry);
+      }
+      finalize(root);
+      return root;
+    }
+    function collectPaths(dir) {
+      const paths = [];
+      const visit = (node) => {
+        for (const file of node.files) paths.push(file.path);
+        for (const child of node.dirs) visit(child);
+      };
+      visit(dir);
+      return paths;
+    }
+    function collectSelected(dir, selected) {
+      let count = 0;
+      const visit = (node) => {
+        for (const file of node.files) if (selected.has(file.path)) count += 1;
+        for (const child of node.dirs) visit(child);
+      };
+      visit(dir);
+      return count;
+    }
+
+    // src/client/panes/ChangesPane.tsx
+    var h9 = React9.createElement;
+    function TreeCheck(props) {
+      const ref = React9.useRef(null);
+      React9.useEffect(() => {
+        if (ref.current) ref.current.indeterminate = props.mixed && !props.checked;
+      }, [props.mixed, props.checked]);
+      return h9("input", {
+        ref,
+        type: "checkbox",
+        className: "gv-change-check",
+        checked: props.checked,
+        disabled: props.disabled,
+        "aria-label": props.label,
+        onClick: (event) => event.stopPropagation(),
+        onChange: props.onChange
+      });
+    }
     function ChangesPane(props) {
       const {
         t,
@@ -1992,9 +2322,12 @@ window.__ModuleLoader__.load({
         repoState,
         commitError,
         height,
+        view,
         inputRef,
         onToggle,
+        onTogglePaths,
         onToggleAll,
+        onView,
         onRefresh,
         onRollback,
         onMessage,
@@ -2004,7 +2337,9 @@ window.__ModuleLoader__.load({
         onContinue,
         onAbort
       } = props;
-      const summary = React7.useMemo(() => summarizeChanges(entries), [entries]);
+      const [collapsed, setCollapsed] = React9.useState(() => /* @__PURE__ */ new Set());
+      const tree = React9.useMemo(() => buildChangeTree(entries), [entries]);
+      const summary = React9.useMemo(() => summarizeChanges(entries), [entries]);
       const allSelected = entries.length > 0 && entries.every((entry) => selected.has(entry.path));
       const selectedCount = entries.filter((entry) => selected.has(entry.path)).length;
       const manualReady = message.trim().length > 0;
@@ -2013,102 +2348,158 @@ window.__ModuleLoader__.load({
       const operationPaused = Boolean(repoState && repoState.operation);
       const canCommit = entries.length > 0 && selectedCount > 0 && !locked && !selectedConflict && !operationPaused;
       const canSubmit = canCommit && manualReady;
-      let list = null;
-      if (loading && entries.length === 0) {
-        list = h7(Spinner, { label: t("loading") });
-      } else if (error) {
-        list = h7(
+      const toggleDir = (path) => {
+        setCollapsed((previous) => {
+          const next = new Set(previous);
+          if (next.has(path)) next.delete(path);
+          else next.add(path);
+          return next;
+        });
+      };
+      const renderFile = (entry, depth, showDir) => {
+        const dot = entry.path.lastIndexOf("/");
+        const dir = dot >= 0 ? entry.path.slice(0, dot) : "";
+        const name = dot >= 0 ? entry.path.slice(dot + 1) : entry.path;
+        const tags = changeTags(entry, t);
+        const isSelected = selected.has(entry.path);
+        const toggle = () => {
+          if (!locked) onToggle(entry.path);
+        };
+        return h9(
           "div",
-          { className: "gv-changes-state" },
-          h7("span", null, error),
-          h7(
+          {
+            key: entry.path,
+            className: `gv-change-row${isSelected ? " gv-change-checked" : ""}${view === "tree" ? " gv-change-row-tree" : ""}`,
+            style: view === "tree" ? { paddingLeft: `${6 + depth * 14}px` } : void 0,
+            title: `${entry.path}
+    ${entry.x}${entry.y}${entry.untracked ? ` · ${t("untracked")}` : ""}`,
+            onClick: toggle
+          },
+          h9("input", {
+            type: "checkbox",
+            className: "gv-change-check",
+            checked: isSelected,
+            disabled: locked,
+            "aria-label": entry.path,
+            onClick: (event) => event.stopPropagation(),
+            onChange: toggle
+          }),
+          h9("span", { className: `gv-change-status gv-chg-${changeTone(entry)}` }, changeBadge(entry)),
+          h9(FileIcon, { name: entry.path, size: 13 }),
+          h9(
+            "span",
+            { className: "gv-change-text" },
+            h9("span", { className: "gv-change-name" }, name),
+            showDir && dir ? h9("span", { className: "gv-change-dir" }, dir) : null
+          ),
+          h9(
+            "span",
+            { className: "gv-change-tags" },
+            tags.map(
+              (tag, index) => h9(
+                "span",
+                { key: `${tag.tone}-${index}`, className: `gv-change-tag gv-tag-${tag.tone}` },
+                tag.label
+              )
+            )
+          ),
+          entry.conflict ? h9(
             "button",
-            { type: "button", className: "gv-button", onClick: onRefresh },
-            h7(IconRefresh, { size: 12 }),
-            h7("span", null, t("retry"))
+            {
+              type: "button",
+              className: "gv-change-resolve",
+              title: `${t("markResolved")} · ${entry.path}`,
+              "aria-label": `${t("markResolved")} ${entry.path}`,
+              disabled: locked,
+              onClick: (event) => {
+                event.stopPropagation();
+                if (!locked) onResolve(entry);
+              }
+            },
+            h9(IconCheck, { size: 12 })
+          ) : null,
+          h9(
+            "button",
+            {
+              type: "button",
+              className: "gv-change-discard",
+              title: `${t("discardChanges")} · ${entry.path}`,
+              "aria-label": `${t("discardChanges")} ${entry.path}`,
+              disabled: locked,
+              onClick: (event) => {
+                event.stopPropagation();
+                if (!locked) onDiscard(entry);
+              }
+            },
+            h9(IconUndo, { size: 12 })
           )
         );
-      } else if (entries.length === 0) {
-        list = h7("div", { className: "gv-changes-state" }, scope ? t("noChangesInScope") : t("noChanges"));
-      } else {
-        list = entries.map((entry) => {
-          const dot = entry.path.lastIndexOf("/");
-          const dir = dot >= 0 ? entry.path.slice(0, dot) : "";
-          const name = dot >= 0 ? entry.path.slice(dot + 1) : entry.path;
-          const tags = changeTags(entry, t);
-          const isSelected = selected.has(entry.path);
-          const toggle = () => {
-            if (!locked) onToggle(entry.path);
-          };
-          return h7(
+      };
+      const renderDir = (node, depth) => {
+        const isCollapsed = collapsed.has(node.path);
+        const paths = collectPaths(node);
+        const selectedIn = collectSelected(node, selected);
+        const all = node.total > 0 && selectedIn === node.total;
+        const mixed = selectedIn > 0 && !all;
+        const rows = [
+          h9(
             "div",
             {
-              key: entry.path,
-              className: `gv-change-row${isSelected ? " gv-change-checked" : ""}`,
-              title: `${entry.path}
-    ${entry.x}${entry.y}${entry.untracked ? ` · ${t("untracked")}` : ""}`,
-              onClick: toggle
+              key: `dir:${node.path}`,
+              className: "gv-change-dir-row",
+              style: { paddingLeft: `${4 + depth * 14}px` },
+              role: "button",
+              tabIndex: 0,
+              "aria-expanded": !isCollapsed,
+              title: node.path,
+              onClick: () => toggleDir(node.path),
+              onKeyDown: (event) => {
+                if (event.target !== event.currentTarget) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  toggleDir(node.path);
+                }
+              }
             },
-            h7("input", {
-              type: "checkbox",
-              className: "gv-change-check",
-              checked: isSelected,
+            h9(
+              "span",
+              { className: `gv-change-dir-chevron${isCollapsed ? "" : " gv-change-dir-chevron-open"}`, "aria-hidden": true },
+              h9(IconChevron, { size: 9 })
+            ),
+            h9(TreeCheck, {
+              checked: all,
+              mixed,
               disabled: locked,
-              "aria-label": entry.path,
-              onClick: (event) => event.stopPropagation(),
-              onChange: toggle
+              label: `${t("selectAll")} · ${node.path}`,
+              onChange: () => {
+                if (!locked) onTogglePaths(paths, !all);
+              }
             }),
-            h7("span", { className: `gv-change-status gv-chg-${changeTone(entry)}` }, changeBadge(entry)),
-            h7(FileIcon, { name: entry.path, size: 13 }),
-            h7(
-              "span",
-              { className: "gv-change-text" },
-              h7("span", { className: "gv-change-name" }, name),
-              dir ? h7("span", { className: "gv-change-dir" }, dir) : null
-            ),
-            h7(
-              "span",
-              { className: "gv-change-tags" },
-              tags.map(
-                (tag, index) => h7(
-                  "span",
-                  { key: `${tag.tone}-${index}`, className: `gv-change-tag gv-tag-${tag.tone}` },
-                  tag.label
-                )
-              )
-            ),
-            entry.conflict ? h7(
-              "button",
-              {
-                type: "button",
-                className: "gv-change-resolve",
-                title: `${t("markResolved")} · ${entry.path}`,
-                "aria-label": `${t("markResolved")} ${entry.path}`,
-                disabled: locked,
-                onClick: (event) => {
-                  event.stopPropagation();
-                  if (!locked) onResolve(entry);
-                }
-              },
-              h7(IconCheck, { size: 12 })
-            ) : null,
-            h7(
-              "button",
-              {
-                type: "button",
-                className: "gv-change-discard",
-                title: `${t("discardChanges")} · ${entry.path}`,
-                "aria-label": `${t("discardChanges")} ${entry.path}`,
-                disabled: locked,
-                onClick: (event) => {
-                  event.stopPropagation();
-                  if (!locked) onDiscard(entry);
-                }
-              },
-              h7(IconUndo, { size: 12 })
-            )
-          );
-        });
+            h9(IconFolder, { size: 13 }),
+            h9("span", { className: "gv-change-dir-name" }, node.name),
+            h9("span", { className: "gv-change-dir-count" }, `${selectedIn}/${node.total}`)
+          )
+        ];
+        if (!isCollapsed) {
+          for (const child of node.dirs) rows.push(...renderDir(child, depth + 1));
+          for (const entry of node.files) rows.push(renderFile(entry, depth + 1, false));
+        }
+        return rows;
+      };
+      let list = null;
+      if (loading && entries.length === 0) {
+        list = h9(Spinner, { label: t("loading") });
+      } else if (error) {
+        list = h9(ErrorState, { t, message: error, onRetry: onRefresh, compact: true });
+      } else if (entries.length === 0) {
+        list = h9("div", { className: "gv-changes-state" }, scope ? t("noChangesInScope") : t("noChanges"));
+      } else if (view === "tree") {
+        const rows = [];
+        for (const dir of tree.dirs) rows.push(...renderDir(dir, 0));
+        for (const entry of tree.files) rows.push(renderFile(entry, 0, false));
+        list = rows;
+      } else {
+        list = entries.map((entry) => renderFile(entry, 0, true));
       }
       const chips = [];
       if (summary.untracked > 0) chips.push(["untracked", t("untracked"), summary.untracked]);
@@ -2116,24 +2507,41 @@ window.__ModuleLoader__.load({
       if (summary.staged > 0) chips.push(["staged", t("staged"), summary.staged]);
       if (summary.conflict > 0) chips.push(["conflict", t("conflictHint"), summary.conflict]);
       if (summary.deleted > 0) chips.push(["deleted", t("deletedHint"), summary.deleted]);
-      return h7(
+      const nextView = view === "tree" ? "list" : "tree";
+      const viewTitle = nextView === "tree" ? t("changesViewTree") : t("changesViewList");
+      return h9(
         "div",
         { className: "gv-changes", style: height ? { height: `${height}px` } : void 0 },
-        h7(
+        h9(
           "div",
           { className: "gv-changes-head" },
-          h7(
+          h9(
             "span",
             { className: "gv-changes-title" },
-            h7("span", null, t("changes")),
-            h7("span", { className: "gv-changes-count" }, String(entries.length)),
-            entries.length !== totalCount ? h7("span", { className: "gv-changes-total" }, `/ ${totalCount}`) : null,
-            loading && entries.length > 0 ? h7("span", { className: "gv-inline-spin", "aria-hidden": true }) : null
+            h9("span", null, t("changes")),
+            h9("span", { className: "gv-changes-count" }, String(entries.length)),
+            entries.length !== totalCount ? h9("span", { className: "gv-changes-total" }, `/ ${totalCount}`) : null,
+            loading && entries.length > 0 ? h9("span", { className: "gv-inline-spin", "aria-hidden": true }) : null
           ),
-          h7(
+          h9(
             "div",
             { className: "gv-changes-actions" },
-            h7(
+            h9(
+              "button",
+              {
+                type: "button",
+                className: "gv-icon-button gv-icon-xs gv-view-toggle",
+                "aria-pressed": view === "tree",
+                title: viewTitle,
+                "aria-label": viewTitle,
+                onClick: () => {
+                  if (!locked) onView(nextView);
+                },
+                disabled: locked
+              },
+              h9(nextView === "tree" ? IconTree : IconList, { size: 12 })
+            ),
+            h9(
               "button",
               {
                 type: "button",
@@ -2143,7 +2551,7 @@ window.__ModuleLoader__.load({
               },
               allSelected ? t("clearSelection") : t("selectAll")
             ),
-            h7(
+            h9(
               "button",
               {
                 type: "button",
@@ -2154,7 +2562,7 @@ window.__ModuleLoader__.load({
               },
               t("rollback")
             ),
-            h7(
+            h9(
               "button",
               {
                 type: "button",
@@ -2164,41 +2572,41 @@ window.__ModuleLoader__.load({
                 onClick: onRefresh,
                 disabled: locked
               },
-              h7(IconRefresh, { size: 12 })
+              h9(IconRefresh, { size: 12 })
             )
           )
         ),
-        chips.length > 0 ? h7(
+        chips.length > 0 ? h9(
           "div",
           { className: "gv-changes-summary", "aria-label": `${t("changes")} · ${entries.length}` },
           chips.map(
-            ([tone, label, count]) => h7(
+            ([tone, label, count]) => h9(
               "span",
               { key: tone, className: `gv-sum-chip gv-sum-${tone}` },
-              h7("span", { className: "gv-sum-dot", "aria-hidden": true }),
+              h9("span", { className: "gv-sum-dot", "aria-hidden": true }),
               `${label} ${count}`
             )
           )
         ) : null,
-        scope ? h7(
+        scope ? h9(
           "div",
           { className: "gv-changes-scope", title: `${scope}${repo ? ` · ${repo.root}` : ""}` },
-          h7("span", { className: "gv-changes-scope-label" }, t("changesInScope")),
-          h7("span", { className: "gv-changes-scope-path" }, scope)
+          h9("span", { className: "gv-changes-scope-label" }, t("changesInScope")),
+          h9("span", { className: "gv-changes-scope-path" }, scope)
         ) : null,
-        repoState && repoState.operation ? h7(
+        repoState && repoState.operation ? h9(
           "div",
           { className: `gv-repo-banner gv-repo-banner-${repoState.operation}` },
-          h7(IconAlert, { size: 13 }),
-          h7(
+          h9(IconAlert, { size: 13 }),
+          h9(
             "span",
             { className: "gv-repo-banner-text" },
             `${operationLabel(repoState.operation, t)} · ${t("operationHint")}`
           ),
-          h7(
+          h9(
             "div",
             { className: "gv-repo-banner-actions" },
-            repoState.operation !== "bisect" ? h7(
+            repoState.operation !== "bisect" ? h9(
               "button",
               {
                 type: "button",
@@ -2208,7 +2616,7 @@ window.__ModuleLoader__.load({
               },
               t("continueOperation")
             ) : null,
-            h7(
+            h9(
               "button",
               {
                 type: "button",
@@ -2220,12 +2628,12 @@ window.__ModuleLoader__.load({
             )
           )
         ) : null,
-        repoNotice ? h7("div", { className: `gv-repo-notice gv-repo-notice-${repoNotice.kind}` }, repoNotice.text) : null,
-        h7("div", { className: "gv-changes-list" }, list),
-        h7(
+        repoNotice && repoNotice.kind === "ok" ? h9("div", { className: "gv-repo-notice gv-repo-notice-ok" }, repoNotice.text) : null,
+        h9("div", { className: `gv-changes-list${view === "tree" ? " gv-changes-list-tree" : ""}` }, list),
+        h9(
           "div",
           { className: "gv-commit" },
-          h7("textarea", {
+          h9("textarea", {
             ref: inputRef,
             className: "gv-commit-input",
             rows: 2,
@@ -2242,10 +2650,10 @@ window.__ModuleLoader__.load({
               }
             }
           }),
-          h7(
+          h9(
             "div",
             { className: "gv-commit-bar" },
-            h7(
+            h9(
               "button",
               {
                 type: "button",
@@ -2254,15 +2662,15 @@ window.__ModuleLoader__.load({
                 disabled: !canCommit || aiBusy,
                 title: operationPaused ? t("finishOperationFirst") : selectedConflict ? t("resolveConflictsFirst") : selectedCount === 0 ? t("commitSelectRequired") : t("generateHint")
               },
-              aiBusy ? h7("span", { className: "gv-inline-spin", "aria-hidden": true }) : h7(IconSparkles, { size: 12 }),
-              h7("span", null, manualReady ? t("regenerateMessage") : t("generateMessage"))
+              aiBusy ? h9("span", { className: "gv-inline-spin", "aria-hidden": true }) : h9(IconSparkles, { size: 12 }),
+              h9("span", null, manualReady ? t("regenerateMessage") : t("generateMessage"))
             ),
-            h7(
+            h9(
               "span",
               { className: "gv-commit-hint" },
               `${t("selectedFiles")} ${selectedCount} / ${entries.length}`
             ),
-            h7(
+            h9(
               "button",
               {
                 type: "button",
@@ -2271,16 +2679,16 @@ window.__ModuleLoader__.load({
                 disabled: !canSubmit,
                 title: operationPaused ? t("finishOperationFirst") : selectedConflict ? t("resolveConflictsFirst") : !manualReady ? t("commitMessageRequired") : selectedCount === 0 ? t("commitSelectRequired") : t("commitKeyHint")
               },
-              h7("span", null, t("commit"))
+              h9("span", null, t("commit"))
             )
           ),
-          commitError ? h7("div", { className: "gv-commit-note gv-commit-error" }, commitError) : null
+          commitError ? h9("div", { className: "gv-commit-note gv-commit-error" }, commitError) : null
         )
       );
     }
 
     // src/client/panes/CommitPane.tsx
-    var React8 = __toESM(require("react"), 1);
+    var React10 = __toESM(require("react"), 1);
 
     // src/client/panes/graph.ts
     var LANE_WIDTH = 16;
@@ -2380,7 +2788,7 @@ window.__ModuleLoader__.load({
     }
 
     // src/client/panes/CommitPane.tsx
-    var h8 = React8.createElement;
+    var h10 = React10.createElement;
     function GraphCell({ row, width }) {
       const x = (lane) => GRAPH_PAD + lane * LANE_WIDTH + LANE_WIDTH / 2;
       const centerX = x(row.lane);
@@ -2388,7 +2796,7 @@ window.__ModuleLoader__.load({
       const parts = [];
       for (const lane of row.top) {
         parts.push(
-          h8("line", {
+          h10("line", {
             key: `top-${lane}`,
             x1: x(lane),
             y1: 0,
@@ -2404,7 +2812,7 @@ window.__ModuleLoader__.load({
         const edgeX = x(edge.to);
         if (edge.straight) {
           parts.push(
-            h8("line", {
+            h10("line", {
               key: `edge-${index}`,
               x1: centerX,
               y1: centerY,
@@ -2417,7 +2825,7 @@ window.__ModuleLoader__.load({
           );
         } else {
           parts.push(
-            h8("path", {
+            h10("path", {
               key: `edge-${index}`,
               d: `M ${centerX} ${centerY} C ${centerX} ${centerY + 8}, ${edgeX} ${ROW_HEIGHT - 8}, ${edgeX} ${ROW_HEIGHT}`,
               fill: "none",
@@ -2430,7 +2838,7 @@ window.__ModuleLoader__.load({
       });
       if (!row.isNew) {
         parts.push(
-          h8("line", {
+          h10("line", {
             key: "incoming",
             x1: centerX,
             y1: 0,
@@ -2443,7 +2851,7 @@ window.__ModuleLoader__.load({
         );
       }
       parts.push(
-        h8("circle", {
+        h10("circle", {
           key: "node",
           cx: centerX,
           cy: centerY,
@@ -2453,7 +2861,7 @@ window.__ModuleLoader__.load({
           strokeWidth: 1.5
         })
       );
-      return h8(
+      return h10(
         "svg",
         {
           className: "gv-graph",
@@ -2470,7 +2878,7 @@ window.__ModuleLoader__.load({
       const isHead = Boolean(entry.head) || entry.kind === "head";
       const kind = isHead ? "head" : entry.kind;
       const label = isHead && entry.name !== "HEAD" ? `HEAD → ${entry.name}` : entry.name;
-      return h8(
+      return h10(
         "span",
         {
           className: `gv-ref gv-ref-${kind}`,
@@ -2505,33 +2913,22 @@ window.__ModuleLoader__.load({
       const branch = log && log.head ? log.head.detached ? `${t("detached")} @ ${log.head.hash.slice(0, 7)}` : log.head.branch : "";
       let content = null;
       if (!log && (loading || !error)) {
-        content = h8(Spinner, { label: t("loading") });
+        content = h10(Spinner, { label: t("loading") });
       } else if (error) {
-        content = h8(
-          "div",
-          { className: "gv-state" },
-          h8("div", { className: "gv-state-title" }, t("errorTitle")),
-          h8("div", { className: "gv-state-text" }, error),
-          h8(
-            "button",
-            { type: "button", className: "gv-button", onClick: onRefresh },
-            h8(IconRefresh, { size: 13 }),
-            h8("span", null, t("retry"))
-          )
-        );
+        content = h10("div", { className: "gv-state" }, h10(ErrorState, { t, message: error, onRetry: onRefresh }));
       } else if (commits.length === 0) {
-        content = h8(
+        content = h10(
           "div",
           { className: "gv-state" },
-          h8(IconGraphMark, { size: 30 }),
-          h8("div", { className: "gv-state-title" }, t("noCommits")),
-          h8("div", { className: "gv-state-text" }, t("noCommitsHint"))
+          h10(IconGraphMark, { size: 30 }),
+          h10("div", { className: "gv-state-title" }, t("noCommits")),
+          h10("div", { className: "gv-state-text" }, t("noCommitsHint"))
         );
       } else {
         content = commits.map((commit, index) => {
           const dimmed = matches !== null && !matches.has(index);
           const isSelected = commit.hash === selected;
-          return h8(
+          return h10(
             "div",
             {
               key: commit.hash,
@@ -2560,19 +2957,19 @@ window.__ModuleLoader__.load({
                 }
               }
             },
-            h8("span", { className: "gv-graphcell" }, h8(GraphCell, { row: rows[index], width: graphWidth })),
-            h8(
+            h10("span", { className: "gv-graphcell" }, h10(GraphCell, { row: rows[index], width: graphWidth })),
+            h10(
               "span",
               { className: "gv-subjectcell" },
-              h8("span", { className: "gv-subject" }, commit.subject || "(no subject)"),
+              h10("span", { className: "gv-subject" }, commit.subject || "(no subject)"),
               commit.refs.map(
-                (entry, refIndex) => h8(RefChip, { key: `${entry.kind}-${entry.name}-${refIndex}`, entry })
+                (entry, refIndex) => h10(RefChip, { key: `${entry.kind}-${entry.name}-${refIndex}`, entry })
               )
             ),
-            narrow ? null : h8("span", { className: "gv-author", title: commit.email }, commit.author),
-            narrow ? null : h8("span", { className: "gv-date", title: fullDate(commit.date) }, shortDate(commit.date)),
-            narrow ? null : h8("span", { className: "gv-hash" }, commit.hash.slice(0, 7)),
-            h8(
+            narrow ? null : h10("span", { className: "gv-author", title: commit.email }, commit.author),
+            narrow ? null : h10("span", { className: "gv-date", title: fullDate(commit.date) }, shortDate(commit.date)),
+            narrow ? null : h10("span", { className: "gv-hash" }, commit.hash.slice(0, 7)),
+            h10(
               "button",
               {
                 type: "button",
@@ -2587,49 +2984,49 @@ window.__ModuleLoader__.load({
                   onMenu(commit, { x: rect.left, y: rect.bottom + 2 });
                 }
               },
-              h8(IconMore, { size: 14 })
+              h10(IconMore, { size: 14 })
             )
           );
         });
       }
-      return h8(
+      return h10(
         "div",
         { className: "gv-log" },
-        scope ? h8(
+        scope ? h10(
           "div",
           { className: "gv-scopebar" },
-          h8(IconFolder, { size: 12 }),
-          h8("span", { className: "gv-scope-path", title: scope }, scope),
-          h8(
+          h10(IconFolder, { size: 12 }),
+          h10("span", { className: "gv-scope-path", title: scope }, scope),
+          h10(
             "button",
             { type: "button", className: "gv-scope-clear", onClick: onClearScope, title: t("clearScope") },
-            h8(IconClose, { size: 11 }),
-            h8("span", null, t("clearScope"))
+            h10(IconClose, { size: 11 }),
+            h10("span", null, t("clearScope"))
           )
         ) : null,
-        h8(
+        h10(
           "div",
           { className: "gv-scroll", style: { "--gv-cols": columns } },
-          h8(
+          h10(
             "div",
             { className: "gv-thead", role: "row" },
-            h8("span", { className: "gv-th" }, ""),
-            h8("span", { className: "gv-th" }, t("subject")),
-            narrow ? null : h8("span", { className: "gv-th" }, t("authorColumn")),
-            narrow ? null : h8("span", { className: "gv-th" }, t("dateColumn")),
-            narrow ? null : h8("span", { className: "gv-th" }, t("hashColumn"))
+            h10("span", { className: "gv-th" }, ""),
+            h10("span", { className: "gv-th" }, t("subject")),
+            narrow ? null : h10("span", { className: "gv-th" }, t("authorColumn")),
+            narrow ? null : h10("span", { className: "gv-th" }, t("dateColumn")),
+            narrow ? null : h10("span", { className: "gv-th" }, t("hashColumn"))
           ),
           content
         ),
-        h8(
+        h10(
           "div",
           { className: "gv-statusbar" },
-          h8(
+          h10(
             "span",
             { className: "gv-status-path", title: log && log.repo ? log.repo.root : "" },
             log && log.repo ? log.repo.root : ""
           ),
-          branch ? h8(
+          branch ? h10(
             "span",
             {
               className: "gv-status-item",
@@ -2637,25 +3034,25 @@ window.__ModuleLoader__.load({
             },
             `· ${branch}`
           ) : null,
-          state && state.ahead > 0 ? h8(
+          state && state.ahead > 0 ? h10(
             "span",
             { className: "gv-status-item gv-status-ahead", title: `${t("ahead")} ${state.ahead}` },
             `↑${state.ahead}`
           ) : null,
-          state && state.behind > 0 ? h8(
+          state && state.behind > 0 ? h10(
             "span",
             { className: "gv-status-item gv-status-behind", title: `${t("behind")} ${state.behind}` },
             `↓${state.behind}`
           ) : null,
-          state && state.operation ? h8(
+          state && state.operation ? h10(
             "span",
             { className: "gv-status-item gv-status-op", title: t("operationHint") },
             operationLabel(state.operation, t)
           ) : null,
-          state && state.operation && onContinue ? h8(
+          state && state.operation && onContinue ? h10(
             "span",
             { className: "gv-status-actions" },
-            state.operation !== "bisect" ? h8(
+            state.operation !== "bisect" ? h10(
               "button",
               {
                 type: "button",
@@ -2666,7 +3063,7 @@ window.__ModuleLoader__.load({
               },
               t("continueOperation")
             ) : null,
-            h8(
+            h10(
               "button",
               {
                 type: "button",
@@ -2678,20 +3075,20 @@ window.__ModuleLoader__.load({
               t("abortOperation")
             )
           ) : null,
-          scope ? h8("span", { className: "gv-status-item" }, `· ${t("filteredBy")}`) : null,
-          loading ? h8(
+          scope ? h10("span", { className: "gv-status-item" }, `· ${t("filteredBy")}`) : null,
+          loading ? h10(
             "span",
             { className: "gv-status-busy", title: t("loading"), "aria-label": t("loading") },
-            h8("span", { className: "gv-inline-spin", "aria-hidden": true })
+            h10("span", { className: "gv-inline-spin", "aria-hidden": true })
           ) : null
         )
       );
     }
 
     // src/client/panes/CompareDialog.tsx
-    var React9 = __toESM(require("react"), 1);
+    var React11 = __toESM(require("react"), 1);
     var import_react_dom = __toESM(require("react-dom"), 1);
-    var h9 = React9.createElement;
+    var h11 = React11.createElement;
     var MAX_DIFF_ROWS = 3e3;
     function parseDiffRows(text) {
       const lines = String(text || "").split(/\r?\n/);
@@ -2781,27 +3178,27 @@ window.__ModuleLoader__.load({
     }
     function compareRow(row, side, key) {
       if (row.kind === "hunk") {
-        return h9("div", { key, className: "gv-crow gv-crow-hunk" }, h9("span", { className: "gv-chunk" }, row.text));
+        return h11("div", { key, className: "gv-crow gv-crow-hunk" }, h11("span", { className: "gv-chunk" }, row.text));
       }
       const old = side === "old";
       const kind = old ? row.kind === "del" || row.kind === "change" ? "del" : row.kind === "add" ? "blank" : "ctx" : row.kind === "add" || row.kind === "change" ? "add" : row.kind === "del" ? "blank" : "ctx";
       const number = old ? row.oldNo : row.newNo;
       const text = old ? row.oldText : row.newText;
-      return h9(
+      return h11(
         "div",
         { key, className: `gv-crow gv-crow-${kind}` },
-        h9("span", { className: "gv-cnum" }, number === null || number === void 0 ? "" : String(number)),
-        h9("span", { className: "gv-ccode" }, text === null || text === void 0 ? "" : text)
+        h11("span", { className: "gv-cnum" }, number === null || number === void 0 ? "" : String(number)),
+        h11("span", { className: "gv-ccode" }, text === null || text === void 0 ? "" : text)
       );
     }
     function CompareDialog({ t, file, commitHash, diff, loading, error, onClose }) {
-      const closeRef = React9.useRef(null);
-      const previouslyFocused = React9.useRef(null);
-      const oldRef = React9.useRef(null);
-      const newRef = React9.useRef(null);
-      const syncing = React9.useRef(false);
-      const parsed = React9.useMemo(() => parseDiffRows(diff ? diff.text : ""), [diff]);
-      React9.useEffect(() => {
+      const closeRef = React11.useRef(null);
+      const previouslyFocused = React11.useRef(null);
+      const oldRef = React11.useRef(null);
+      const newRef = React11.useRef(null);
+      const syncing = React11.useRef(false);
+      const parsed = React11.useMemo(() => parseDiffRows(diff ? diff.text : ""), [diff]);
+      React11.useEffect(() => {
         const previousOverflow = document.body.style.overflow;
         previouslyFocused.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         document.body.style.overflow = "hidden";
@@ -2835,37 +3232,32 @@ window.__ModuleLoader__.load({
       const empty = diff !== null && !binary && parsed.rows.length === 0;
       let body = null;
       if (loading) {
-        body = h9(Spinner, { label: t("loadingDiff") });
+        body = h11(Spinner, { label: t("loadingDiff") });
       } else if (error) {
-        body = h9(
-          "div",
-          { className: "gv-details-error" },
-          h9("div", { className: "gv-state-title" }, t("errorTitle")),
-          h9("div", { className: "gv-state-text" }, error)
-        );
+        body = h11("div", { className: "gv-details-error" }, h11(ErrorState, { t, message: error }));
       } else if (binary) {
-        body = h9("div", { className: "gv-modal-empty" }, t("binaryCompare"));
+        body = h11("div", { className: "gv-modal-empty" }, t("binaryCompare"));
       } else if (empty || !diff) {
-        body = h9("div", { className: "gv-modal-empty" }, t("emptyDiff"));
+        body = h11("div", { className: "gv-modal-empty" }, t("emptyDiff"));
       } else {
-        body = h9(
+        body = h11(
           "div",
           { className: "gv-compare" },
-          h9(
+          h11(
             "div",
             { className: "gv-cside" },
-            h9("div", { className: "gv-ctitle" }, t("oldVersion")),
-            h9(
+            h11("div", { className: "gv-ctitle" }, t("oldVersion")),
+            h11(
               "div",
               { className: "gv-clines", ref: oldRef, onScroll: syncScroll("old") },
               parsed.rows.map((row, index) => compareRow(row, "old", index))
             )
           ),
-          h9(
+          h11(
             "div",
             { className: "gv-cside" },
-            h9("div", { className: "gv-ctitle" }, t("newVersion")),
-            h9(
+            h11("div", { className: "gv-ctitle" }, t("newVersion")),
+            h11(
               "div",
               { className: "gv-clines", ref: newRef, onScroll: syncScroll("new") },
               parsed.rows.map((row, index) => compareRow(row, "new", index))
@@ -2874,7 +3266,7 @@ window.__ModuleLoader__.load({
         );
       }
       const note = parsed.truncated || diff !== null && diff.truncated;
-      const dialog = h9(
+      const dialog = h11(
         "div",
         {
           className: "gv-modal-mask",
@@ -2882,20 +3274,20 @@ window.__ModuleLoader__.load({
             if (event.target === event.currentTarget) onClose();
           }
         },
-        h9(
+        h11(
           "div",
           { className: "gv-modal", role: "dialog", "aria-modal": "true", "aria-label": t("compareTitle") },
-          h9(
+          h11(
             "div",
             { className: "gv-modal-head" },
-            h9(
+            h11(
               "div",
               { className: "gv-modal-heading" },
-              h9("span", { className: `gv-status ${statusClass(file.status)}` }, file.status || "?"),
-              h9("span", { className: "gv-modal-path", title: file.path }, file.path),
-              h9("span", { className: "gv-modal-hash", title: commitHash }, commitHash.slice(0, 7))
+              h11("span", { className: `gv-status ${statusClass(file.status)}` }, file.status || "?"),
+              h11("span", { className: "gv-modal-path", title: file.path }, file.path),
+              h11("span", { className: "gv-modal-hash", title: commitHash }, commitHash.slice(0, 7))
             ),
-            h9(
+            h11(
               "button",
               {
                 type: "button",
@@ -2905,39 +3297,34 @@ window.__ModuleLoader__.load({
                 "aria-label": t("close"),
                 onClick: onClose
               },
-              h9(IconClose, { size: 14 })
+              h11(IconClose, { size: 14 })
             )
           ),
-          h9("div", { className: "gv-modal-body" }, body),
-          note ? h9("div", { className: "gv-modal-foot" }, h9("span", null, t("fileDiffTruncated"))) : null
+          h11("div", { className: "gv-modal-body" }, body),
+          note ? h11("div", { className: "gv-modal-foot" }, h11("span", null, t("fileDiffTruncated"))) : null
         )
       );
       return import_react_dom.default.createPortal(dialog, document.body);
     }
 
     // src/client/panes/DetailsPane.tsx
-    var React10 = __toESM(require("react"), 1);
-    var h10 = React10.createElement;
+    var React12 = __toESM(require("react"), 1);
+    var h12 = React12.createElement;
     function DetailsPane(props) {
       const { t, commit, details, loading, error, copied, scope, headHash, onCopy, onCompare, onSelectHash, onHistory } = props;
-      const spinner = h10(Spinner, { label: t("loadingDetail") });
+      const spinner = h12(Spinner, { label: t("loadingDetail") });
       let body = null;
       if (loading && !details) {
         body = spinner;
       } else if (!commit && !details) {
-        body = h10(
+        body = h12(
           "div",
           { className: "gv-details-empty" },
-          h10("div", { className: "gv-details-empty-icon" }, h10(IconGraphMark, { size: 22 })),
-          h10("div", null, t("selectCommit"))
+          h12("div", { className: "gv-details-empty-icon" }, h12(IconGraphMark, { size: 22 })),
+          h12("div", null, t("selectCommit"))
         );
       } else if (error) {
-        body = h10(
-          "div",
-          { className: "gv-details-error" },
-          h10("div", { className: "gv-state-title" }, t("errorTitle")),
-          h10("div", { className: "gv-state-text" }, error)
-        );
+        body = h12("div", { className: "gv-details-error" }, h12(ErrorState, { t, message: error }));
       } else if (details) {
         const isHead = Boolean(headHash) && details.hash === headHash;
         const isMerge = Array.isArray(details.parents) && details.parents.length > 1;
@@ -2946,14 +3333,14 @@ window.__ModuleLoader__.load({
         if (!isMerge) actions.push({ op: "revert", label: t("revertCommit"), danger: false });
         if (!isHead && !isMerge) actions.push({ op: "cherryPick", label: t("cherryPickCommit"), danger: false });
         if (!isHead) actions.push({ op: "checkout", label: t("checkoutCommit"), danger: false });
-        body = h10(
-          React10.Fragment,
+        body = h12(
+          React12.Fragment,
           null,
-          h10(
+          h12(
             "div",
             { className: "gv-detail-hashrow" },
-            h10("code", { className: "gv-detail-hash" }, details.shortHash),
-            h10(
+            h12("code", { className: "gv-detail-hash" }, details.shortHash),
+            h12(
               "button",
               {
                 type: "button",
@@ -2962,42 +3349,42 @@ window.__ModuleLoader__.load({
                 "aria-label": t("copyHash"),
                 onClick: () => onCopy(details.hash)
               },
-              h10(IconCopy, { size: 13 })
+              h12(IconCopy, { size: 13 })
             ),
-            copied ? h10("span", { className: "gv-copied" }, t("copied")) : null
+            copied ? h12("span", { className: "gv-copied" }, t("copied")) : null
           ),
-          commit && commit.refs.length ? h10(
+          commit && commit.refs.length ? h12(
             "div",
             { className: "gv-detail-refs" },
             commit.refs.map(
-              (entry, index) => h10(RefChip, { key: `${entry.kind}-${entry.name}-${index}`, entry })
+              (entry, index) => h12(RefChip, { key: `${entry.kind}-${entry.name}-${index}`, entry })
             )
           ) : null,
-          h10("div", { className: "gv-detail-subject" }, details.subject || "(no subject)"),
-          details.message && details.message.split(/\r?\n/).length > 1 ? h10(
+          h12("div", { className: "gv-detail-subject" }, details.subject || "(no subject)"),
+          details.message && details.message.split(/\r?\n/).length > 1 ? h12(
             "pre",
             { className: "gv-detail-message" },
             details.message.split(/\r?\n/).slice(1).join("\n").trim()
           ) : null,
-          h10(
+          h12(
             "dl",
             { className: "gv-meta" },
-            h10("dt", null, t("author")),
-            h10(
+            h12("dt", null, t("author")),
+            h12(
               "dd",
               null,
               details.author.name,
-              h10("span", { className: "gv-meta-mail" }, ` <${details.author.email}>`)
+              h12("span", { className: "gv-meta-mail" }, ` <${details.author.email}>`)
             ),
-            h10("dt", null, t("date")),
-            h10("dd", null, fullDate(details.date)),
-            details.committer && details.committer.name !== details.author.name ? h10(React10.Fragment, null, h10("dt", null, t("committer")), h10("dd", null, details.committer.name)) : null,
-            details.parents.length ? h10("dt", null, t("parents")) : null,
-            details.parents.length ? h10(
+            h12("dt", null, t("date")),
+            h12("dd", null, fullDate(details.date)),
+            details.committer && details.committer.name !== details.author.name ? h12(React12.Fragment, null, h12("dt", null, t("committer")), h12("dd", null, details.committer.name)) : null,
+            details.parents.length ? h12("dt", null, t("parents")) : null,
+            details.parents.length ? h12(
               "dd",
               { className: "gv-parents" },
               details.parents.map(
-                (parentHash) => h10(
+                (parentHash) => h12(
                   "button",
                   {
                     key: parentHash,
@@ -3011,11 +3398,11 @@ window.__ModuleLoader__.load({
               )
             ) : null
           ),
-          actions.length === 0 ? null : h10(
+          actions.length === 0 ? null : h12(
             "div",
             { className: "gv-detail-actions" },
             actions.map(
-              ({ op, label, danger }) => h10(
+              ({ op, label, danger }) => h12(
                 "button",
                 {
                   key: op,
@@ -3028,19 +3415,19 @@ window.__ModuleLoader__.load({
               )
             )
           ),
-          h10(
+          h12(
             "div",
             { className: "gv-section-title" },
-            h10("span", null, `${t("files")} · ${details.files.length} ${t("fileCountUnit")}`),
-            scope ? h10("span", { className: "gv-filter-note", title: scope }, t("filteredBy")) : null
+            h12("span", null, `${t("files")} · ${details.files.length} ${t("fileCountUnit")}`),
+            scope ? h12("span", { className: "gv-filter-note", title: scope }, t("filteredBy")) : null
           ),
-          details.files.length === 0 ? h10("div", { className: "gv-muted" }, scope ? t("noFilesInScope") : t("noFiles")) : h10(
+          details.files.length === 0 ? h12("div", { className: "gv-muted" }, scope ? t("noFilesInScope") : t("noFiles")) : h12(
             "div",
             { className: "gv-files" },
             details.files.map((entry) => {
               const additions = entry.additions ?? 0;
               const deletions = entry.deletions ?? 0;
-              return h10(
+              return h12(
                 "button",
                 {
                   key: `${entry.status}-${entry.path}`,
@@ -3050,38 +3437,38 @@ window.__ModuleLoader__.load({
     ${t("compareHint")}`,
                   onClick: () => onCompare(entry)
                 },
-                h10("span", { className: `gv-status ${statusClass(entry.status)}` }, entry.status || "?"),
-                h10(FileIcon, { name: entry.path, size: 13 }),
-                h10("span", { className: "gv-file-path" }, entry.path),
-                entry.binary ? h10("span", { className: "gv-file-stat gv-file-binary" }, t("binary")) : additions > 0 || deletions > 0 ? h10(
+                h12("span", { className: `gv-status ${statusClass(entry.status)}` }, entry.status || "?"),
+                h12(FileIcon, { name: entry.path, size: 13 }),
+                h12("span", { className: "gv-file-path" }, entry.path),
+                entry.binary ? h12("span", { className: "gv-file-stat gv-file-binary" }, t("binary")) : additions > 0 || deletions > 0 ? h12(
                   "span",
                   { className: "gv-file-stat" },
-                  additions > 0 ? h10("span", { className: "gv-add" }, `+${additions}`) : null,
+                  additions > 0 ? h12("span", { className: "gv-add" }, `+${additions}`) : null,
                   additions > 0 && deletions > 0 ? " " : null,
-                  deletions > 0 ? h10("span", { className: "gv-del" }, `-${deletions}`) : null
+                  deletions > 0 ? h12("span", { className: "gv-del" }, `-${deletions}`) : null
                 ) : null,
-                h10("span", { className: "gv-file-compare", "aria-hidden": true }, h10(IconCompare, { size: 12 }))
+                h12("span", { className: "gv-file-compare", "aria-hidden": true }, h12(IconCompare, { size: 12 }))
               );
             })
           )
         );
       }
-      return h10(
+      return h12(
         "aside",
         { className: "gv-details" },
-        h10(
+        h12(
           "div",
           { className: "gv-details-head" },
-          h10("span", null, t("detailTitle")),
-          scope ? h10("span", { className: "gv-head-scope", title: scope }, t("filteredBy")) : null
+          h12("span", null, t("detailTitle")),
+          scope ? h12("span", { className: "gv-head-scope", title: scope }, t("filteredBy")) : null
         ),
-        h10("div", { className: "gv-details-body" }, body)
+        h12("div", { className: "gv-details-body" }, body)
       );
     }
 
     // src/client/panes/FileTreePane.tsx
-    var React11 = __toESM(require("react"), 1);
-    var h11 = React11.createElement;
+    var React13 = __toESM(require("react"), 1);
+    var h13 = React13.createElement;
     function flattenTree(children, expanded) {
       const rows = [];
       const walk = (path, depth) => {
@@ -3103,7 +3490,7 @@ window.__ModuleLoader__.load({
     }
     function FileTreePane(props) {
       const { t, repo, scope, children, expanded, loading, errors, onSelect, onToggle, onRetryRoot, refName } = props;
-      const nodes = React11.useMemo(() => flattenTree(children, expanded), [children, expanded]);
+      const nodes = React13.useMemo(() => flattenTree(children, expanded), [children, expanded]);
       const rootLoading = loading.has("");
       const rootError = errors[""];
       const projectName = repo ? repo.title || String(repo.root || "").split(/[\\/]/).filter(Boolean).pop() || "" : "";
@@ -3112,19 +3499,19 @@ window.__ModuleLoader__.load({
         event.preventDefault();
         callback();
       };
-      return h11(
+      return h13(
         "div",
         { className: "gv-tree" },
-        h11(
+        h13(
           "div",
           { className: "gv-tree-head" },
-          h11("span", null, t("filesTab")),
-          refName ? h11("span", { className: "gv-tree-rootname gv-tree-refmode", title: refName }, `${t("historyTreeHint")} · ${refName}`) : h11("span", { className: "gv-tree-rootname", title: repo ? repo.root : "" }, projectName)
+          h13("span", null, t("filesTab")),
+          refName ? h13("span", { className: "gv-tree-rootname gv-tree-refmode", title: refName }, `${t("historyTreeHint")} · ${refName}`) : h13("span", { className: "gv-tree-rootname", title: repo ? repo.root : "" }, projectName)
         ),
-        h11(
+        h13(
           "div",
           { className: "gv-tree-scroll", role: "tree", "aria-label": t("filesTab") },
-          h11(
+          h13(
             "div",
             {
               className: `gv-tree-row gv-tree-root${scope === "" ? " gv-tree-selected" : ""}`,
@@ -3136,15 +3523,15 @@ window.__ModuleLoader__.load({
               onClick: () => onSelect(null),
               onKeyDown: (event) => activate(event, () => onSelect(null))
             },
-            h11(IconHome, { size: 13 }),
-            h11("span", { className: "gv-tree-name" }, projectName || t("rootLabel"))
+            h13(IconHome, { size: 13 }),
+            h13("span", { className: "gv-tree-name" }, projectName || t("rootLabel"))
           ),
           nodes.map((node) => {
             const isDir = node.type === "tree";
             const isOpen = isDir && expanded.has(node.path);
             const isLoading = loading.has(node.path);
             const error = errors[node.path];
-            return h11(
+            return h13(
               "div",
               {
                 key: node.path,
@@ -3160,7 +3547,7 @@ window.__ModuleLoader__.load({
                 onClick: () => onSelect(node),
                 onKeyDown: (event) => activate(event, () => onSelect(node))
               },
-              isDir ? h11(
+              isDir ? h13(
                 "button",
                 {
                   type: "button",
@@ -3172,12 +3559,12 @@ window.__ModuleLoader__.load({
                     onToggle(node.path);
                   }
                 },
-                h11(IconChevron, { size: 10 })
-              ) : h11("span", { className: "gv-chevron-space" }),
-              h11(FileIcon, { name: node.name, isDir, open: isOpen, size: 14 }),
-              h11("span", { className: "gv-tree-name" }, node.name),
-              isDir && node.dirty ? h11("span", { className: "gv-tree-dirty", title: t("modifiedHint"), "aria-hidden": true }) : null,
-              !isDir && node.status ? h11(
+                h13(IconChevron, { size: 10 })
+              ) : h13("span", { className: "gv-chevron-space" }),
+              h13(FileIcon, { name: node.name, isDir, open: isOpen, size: 14 }),
+              h13("span", { className: "gv-tree-name" }, node.name),
+              isDir && node.dirty ? h13("span", { className: "gv-tree-dirty", title: t("modifiedHint"), "aria-hidden": true }) : null,
+              !isDir && node.status ? h13(
                 "span",
                 {
                   className: `gv-tree-status gv-tone-${statusTone(node.status)}`,
@@ -3185,29 +3572,29 @@ window.__ModuleLoader__.load({
                 },
                 node.status
               ) : null,
-              isLoading ? h11("span", { className: "gv-tree-spinner", "aria-hidden": true }) : null,
-              error ? h11("span", { className: "gv-tree-error-mark", title: error }, "!") : null
+              isLoading ? h13("span", { className: "gv-tree-spinner", "aria-hidden": true }) : null,
+              error ? h13("span", { className: "gv-tree-error-mark", title: error }, "!") : null
             );
           }),
-          rootLoading && nodes.length === 0 ? h11(Spinner, { label: t("loadingTree") }) : null,
-          rootError ? h11(
+          rootLoading && nodes.length === 0 ? h13(Spinner, { label: t("loadingTree") }) : null,
+          rootError ? h13(
             "div",
             { className: "gv-tree-state" },
-            h11("span", null, t("treeError")),
-            h11("button", { type: "button", className: "gv-button", onClick: onRetryRoot }, t("retry"))
+            h13("span", null, t("treeError")),
+            h13("button", { type: "button", className: "gv-button", onClick: onRetryRoot }, t("retry"))
           ) : null,
-          !rootLoading && !rootError && nodes.length === 0 ? h11("div", { className: "gv-tree-state" }, t("treeEmpty")) : null
+          !rootLoading && !rootError && nodes.length === 0 ? h13("div", { className: "gv-tree-state" }, t("treeEmpty")) : null
         )
       );
     }
 
     // src/client/panes/Toolbar.tsx
-    var React13 = __toESM(require("react"), 1);
+    var React15 = __toESM(require("react"), 1);
 
     // src/client/ui/Dropdown.tsx
-    var React12 = __toESM(require("react"), 1);
+    var React14 = __toESM(require("react"), 1);
     var ReactDOM5 = __toESM(require("react-dom"), 1);
-    var h12 = React12.createElement;
+    var h14 = React14.createElement;
     function Dropdown({
       t,
       label,
@@ -3219,25 +3606,25 @@ window.__ModuleLoader__.load({
       width = "190px",
       placeholder
     }) {
-      const id = React12.useId();
-      const [open, setOpen] = React12.useState(false);
-      const [active, setActive] = React12.useState(-1);
-      const [rowMenu, setRowMenu] = React12.useState(-1);
-      const [rowMenuPos, setRowMenuPos] = React12.useState(null);
-      const rootRef = React12.useRef(null);
-      const menuRef = React12.useRef(null);
-      const rowMenuRef = React12.useRef(null);
+      const id = React14.useId();
+      const [open, setOpen] = React14.useState(false);
+      const [active, setActive] = React14.useState(-1);
+      const [rowMenu, setRowMenu] = React14.useState(-1);
+      const [rowMenuPos, setRowMenuPos] = React14.useState(null);
+      const rootRef = React14.useRef(null);
+      const menuRef = React14.useRef(null);
+      const rowMenuRef = React14.useRef(null);
       const selectedIndex = options.findIndex((option) => option.value === value);
       const current = selectedIndex >= 0 ? options[selectedIndex] : null;
-      React12.useEffect(() => {
+      React14.useEffect(() => {
         if (!open) setRowMenu(-1);
       }, [open]);
-      React12.useEffect(() => {
+      React14.useEffect(() => {
         if (rowMenu < 0 || !rowMenuRef.current) return;
         const node = rowMenuRef.current.querySelector("button");
         if (node && typeof node.focus === "function") node.focus();
       }, [rowMenu]);
-      React12.useEffect(() => {
+      React14.useEffect(() => {
         if (!open) return void 0;
         const onPointerDown = (event) => {
           if (rowMenuRef.current && rowMenuRef.current.contains(event.target)) return;
@@ -3272,13 +3659,13 @@ window.__ModuleLoader__.load({
         });
         setRowMenu(index);
       };
-      React12.useEffect(() => {
+      React14.useEffect(() => {
         if (open) setActive(selectedIndex >= 0 ? selectedIndex : options.length > 0 ? 0 : -1);
       }, [open, selectedIndex, options.length]);
-      React12.useEffect(() => {
+      React14.useEffect(() => {
         if (disabled && open) setOpen(false);
       }, [disabled, open]);
-      React12.useEffect(() => {
+      React14.useEffect(() => {
         if (!open || active < 0 || !menuRef.current) return;
         const node = menuRef.current.querySelector(`[data-index="${active}"]`);
         if (node && typeof node.scrollIntoView === "function") node.scrollIntoView({ block: "nearest" });
@@ -3340,15 +3727,15 @@ window.__ModuleLoader__.load({
       const rows = [];
       options.forEach((option, index) => {
         if (option.group && option.group !== lastGroup) {
-          rows.push(h12("div", { key: `group-${option.group}-${index}`, className: "gv-dropdown-group" }, option.group));
+          rows.push(h14("div", { key: `group-${option.group}-${index}`, className: "gv-dropdown-group" }, option.group));
         }
         lastGroup = option.group || null;
         const isActive = index === active;
         const isSelected = option.value === value;
         const actions = Array.isArray(option.actions) ? option.actions : [];
-        const iconNode = option.icon === "repo" ? h12(FileIcon, { name: "", isDir: true, size: 14 }) : option.icon === "tag" ? h12(IconTag, { size: 12 }) : option.icon === "remote" ? h12(IconBranch, { size: 12 }) : option.icon === "head" ? h12("span", { className: "gv-opt-head-dot", "aria-hidden": true }) : h12(IconBranch, { size: 12 });
+        const iconNode = option.icon === "repo" ? h14(FileIcon, { name: "", isDir: true, size: 14 }) : option.icon === "tag" ? h14(IconTag, { size: 12 }) : option.icon === "remote" ? h14(IconBranch, { size: 12 }) : option.icon === "head" ? h14("span", { className: "gv-opt-head-dot", "aria-hidden": true }) : h14(IconBranch, { size: 12 });
         rows.push(
-          h12(
+          h14(
             "div",
             {
               key: `${option.value}-${index}`,
@@ -3360,16 +3747,16 @@ window.__ModuleLoader__.load({
               onMouseMove: () => setActive(index),
               onClick: () => pick(index)
             },
-            h12("span", { className: "gv-opt-icon" }, iconNode),
-            h12(
+            h14("span", { className: "gv-opt-icon" }, iconNode),
+            h14(
               "span",
               { className: "gv-opt-text" },
-              h12("span", { className: "gv-opt-label" }, option.label),
-              option.description ? h12("span", { className: "gv-opt-desc", title: option.description }, option.description) : null
+              h14("span", { className: "gv-opt-label" }, option.label),
+              option.description ? h14("span", { className: "gv-opt-desc", title: option.description }, option.description) : null
             ),
-            option.head ? h12("span", { className: "gv-opt-head" }, t("head")) : null,
-            isSelected ? h12("span", { className: "gv-opt-check", "aria-hidden": true }, h12(IconCheck, { size: 11 })) : null,
-            actions.length > 0 ? h12(
+            option.head ? h14("span", { className: "gv-opt-head" }, t("head")) : null,
+            isSelected ? h14("span", { className: "gv-opt-check", "aria-hidden": true }, h14(IconCheck, { size: 11 })) : null,
+            actions.length > 0 ? h14(
               "button",
               {
                 type: "button",
@@ -3386,16 +3773,16 @@ window.__ModuleLoader__.load({
                 },
                 onMouseDown: (event) => event.stopPropagation()
               },
-              h12(IconMore, { size: 14 })
+              h14(IconMore, { size: 14 })
             ) : null
           )
         );
       });
       const activeActions = rowMenu >= 0 && rowMenu < options.length && Array.isArray(options[rowMenu].actions) ? options[rowMenu].actions ?? null : null;
-      return h12(
+      return h14(
         "div",
         { className: "gv-dropdown", style: { width }, ref: rootRef },
-        h12(
+        h14(
           "button",
           {
             type: "button",
@@ -3412,11 +3799,11 @@ window.__ModuleLoader__.load({
             },
             onKeyDown
           },
-          h12("span", { className: "gv-dropdown-icon" }, icon === "repo" ? h12(FileIcon, { name: "", isDir: true, size: 14 }) : h12(IconBranch, { size: 13 })),
-          h12("span", { className: "gv-dropdown-label" }, current ? current.label : placeholder),
-          h12("span", { className: "gv-dropdown-chevron", "aria-hidden": true }, h12(IconChevronDown, { size: 11 }))
+          h14("span", { className: "gv-dropdown-icon" }, icon === "repo" ? h14(FileIcon, { name: "", isDir: true, size: 14 }) : h14(IconBranch, { size: 13 })),
+          h14("span", { className: "gv-dropdown-label" }, current ? current.label : placeholder),
+          h14("span", { className: "gv-dropdown-chevron", "aria-hidden": true }, h14(IconChevronDown, { size: 11 }))
         ),
-        open ? h12(
+        open ? h14(
           "div",
           {
             className: "gv-dropdown-menu",
@@ -3425,10 +3812,10 @@ window.__ModuleLoader__.load({
             "aria-label": label,
             ref: menuRef
           },
-          rows.length > 0 ? rows : h12("div", { className: "gv-dropdown-empty" }, placeholder)
+          rows.length > 0 ? rows : h14("div", { className: "gv-dropdown-empty" }, placeholder)
         ) : null,
         activeActions && rowMenuPos ? ReactDOM5.createPortal(
-          h12(
+          h14(
             "div",
             {
               className: "gv-opt-menu",
@@ -3439,7 +3826,7 @@ window.__ModuleLoader__.load({
               onMouseDown: (event) => event.stopPropagation()
             },
             activeActions.map(
-              (item, actionIndex) => item.separator ? h12("div", { key: `sep-${actionIndex}`, className: "gv-opt-menu-sep", role: "separator" }) : h12(
+              (item, actionIndex) => item.separator ? h14("div", { key: `sep-${actionIndex}`, className: "gv-opt-menu-sep", role: "separator" }) : h14(
                 "button",
                 {
                   key: item.id || `${item.label}-${actionIndex}`,
@@ -3454,8 +3841,8 @@ window.__ModuleLoader__.load({
                     item.onSelect?.();
                   }
                 },
-                h12("span", { className: "gv-opt-menu-label" }, item.label),
-                item.hint ? h12("span", { className: "gv-opt-menu-hint" }, item.hint) : null
+                h14("span", { className: "gv-opt-menu-label" }, item.label),
+                item.hint ? h14("span", { className: "gv-opt-menu-hint" }, item.hint) : null
               )
             )
           ),
@@ -3465,7 +3852,7 @@ window.__ModuleLoader__.load({
     }
 
     // src/client/panes/Toolbar.tsx
-    var h13 = React13.createElement;
+    var h15 = React15.createElement;
     function Toolbar(props) {
       const {
         t,
@@ -3496,12 +3883,12 @@ window.__ModuleLoader__.load({
       const ahead = sync && sync.ahead ? sync.ahead : 0;
       const behind = sync && sync.behind ? sync.behind : 0;
       const remoteDisabled = !log || syncBusy;
-      return h13(
+      return h15(
         "div",
         { className: "gv-toolbar" },
-        h13("div", { className: "gv-brand" }, h13(IconGraphMark, { size: 13 }), h13("span", null, t("panel"))),
-        h13("span", { className: "gv-divider", "aria-hidden": true }),
-        h13(Dropdown, {
+        h15("div", { className: "gv-brand" }, h15(IconGraphMark, { size: 13 }), h15("span", null, t("panel"))),
+        h15("span", { className: "gv-divider", "aria-hidden": true }),
+        h15(Dropdown, {
           t,
           label: t("selectRepo"),
           value: repoId,
@@ -3512,7 +3899,7 @@ window.__ModuleLoader__.load({
           width: "190px",
           placeholder: t("noRepos")
         }),
-        h13(Dropdown, {
+        h15(Dropdown, {
           t,
           label: t("selectBranch"),
           value: refValue,
@@ -3523,10 +3910,10 @@ window.__ModuleLoader__.load({
           width: "210px",
           placeholder: t("branch")
         }),
-        h13(
+        h15(
           "div",
           { className: "gv-sync" },
-          h13(
+          h15(
             "button",
             {
               type: "button",
@@ -3536,40 +3923,40 @@ window.__ModuleLoader__.load({
               disabled: remoteDisabled,
               onClick: onFetch
             },
-            h13(IconRefresh, { size: 14 })
+            h15(IconRefresh, { size: 14 })
           ),
-          h13(
+          h15(
             "button",
             {
               type: "button",
               className: "gv-icon-button",
-              title: behind > 0 ? `${t("pull")} · ↓${behind}` : t("pull"),
+              title: behind > 0 ? `${t("pull")} · ↓${behind} · ${t("pullModifierHint")}` : `${t("pull")} · ${t("pullModifierHint")}`,
               "aria-label": t("pull"),
               disabled: remoteDisabled,
-              onClick: onPull
+              onClick: (event) => onPull(event.shiftKey)
             },
-            h13(IconArrowDown, { size: 14 }),
-            behind > 0 ? h13("span", { className: "gv-sync-count gv-sync-behind" }, String(behind)) : null
+            h15(IconArrowDown, { size: 14 }),
+            behind > 0 ? h15("span", { className: "gv-sync-count gv-sync-behind" }, String(behind)) : null
           ),
-          h13(
+          h15(
             "button",
             {
               type: "button",
               className: "gv-icon-button",
-              title: ahead > 0 ? `${t("push")} · ↑${ahead}` : t("push"),
+              title: ahead > 0 ? `${t("push")} · ↑${ahead} · ${t("pushModifierHint")}` : `${t("push")} · ${t("pushModifierHint")}`,
               "aria-label": t("push"),
               disabled: remoteDisabled,
-              onClick: onPush
+              onClick: (event) => onPush(event.shiftKey)
             },
-            h13(IconArrowUp, { size: 14 }),
-            ahead > 0 ? h13("span", { className: "gv-sync-count gv-sync-ahead" }, String(ahead)) : null
+            h15(IconArrowUp, { size: 14 }),
+            ahead > 0 ? h15("span", { className: "gv-sync-count gv-sync-ahead" }, String(ahead)) : null
           )
         ),
-        h13(
+        h15(
           "div",
           { className: "gv-search" },
-          h13(IconSearch),
-          h13("input", {
+          h15(IconSearch),
+          h15("input", {
             className: "gv-search-input",
             type: "search",
             value: query,
@@ -3584,10 +3971,10 @@ window.__ModuleLoader__.load({
             }
           })
         ),
-        h13("div", { className: "gv-spacer" }),
-        matchCount !== null ? h13("span", { className: "gv-count gv-match-count" }, `${matchCount} ${t("matchesUnit")}`) : null,
-        count ? h13("span", { className: "gv-count" }, `${count} ${t("commitsUnit")}`) : null,
-        h13(
+        h15("div", { className: "gv-spacer" }),
+        matchCount !== null ? h15("span", { className: "gv-count gv-match-count" }, `${matchCount} ${t("matchesUnit")}`) : null,
+        count ? h15("span", { className: "gv-count" }, `${count} ${t("commitsUnit")}`) : null,
+        h15(
           "button",
           {
             type: "button",
@@ -3596,13 +3983,13 @@ window.__ModuleLoader__.load({
             "aria-label": t("refresh"),
             onClick: onRefresh
           },
-          h13(IconRefresh, { size: 14 })
+          h15(IconRefresh, { size: 14 })
         )
       );
     }
 
     // src/client/app.tsx
-    var h14 = React14.createElement;
+    var h16 = React16.createElement;
     var STATUS_POLL_MS = 2e4;
     var TREE_REFRESH_THROTTLE_MS = 3e3;
     var REMOTE_STRIP_MS = 6e3;
@@ -3637,71 +4024,110 @@ window.__ModuleLoader__.load({
     }
     function GitViewPanel({ t }) {
       const translate = t ?? IDENTITY;
-      const rootRef = React14.useRef(null);
-      const [api] = React14.useState(() => new GitApi());
-      const [layout] = React14.useState(() => new LayoutStore());
-      const [notices] = React14.useState(() => new NoticeCenter());
-      const [repos, setRepos] = React14.useState(null);
-      const [repoId, setRepoId] = React14.useState("");
-      const [reposError, setReposError] = React14.useState("");
-      const [reposTick, setReposTick] = React14.useState(0);
-      const [log, setLog] = React14.useState(null);
-      const [logError, setLogError] = React14.useState("");
-      const [loadingLog, setLoadingLog] = React14.useState(false);
-      const [refValue, setRefValue] = React14.useState("");
-      const [reloadTick, setReloadTick] = React14.useState(0);
-      const [query, setQuery] = React14.useState("");
-      const [selected, setSelected] = React14.useState("");
-      const [scope, setScope] = React14.useState("");
-      const [details, setDetails] = React14.useState(null);
-      const [detailsError, setDetailsError] = React14.useState("");
-      const [loadingDetails, setLoadingDetails] = React14.useState(false);
-      const [compare, setCompare] = React14.useState(null);
-      const [diff, setDiff] = React14.useState(null);
-      const [diffError, setDiffError] = React14.useState("");
-      const [loadingDiff, setLoadingDiff] = React14.useState(false);
-      const [treeChildren, setTreeChildren] = React14.useState({});
-      const [treeExpanded, setTreeExpanded] = React14.useState(() => /* @__PURE__ */ new Set());
-      const [treeLoading, setTreeLoading] = React14.useState(() => /* @__PURE__ */ new Set());
-      const [treeErrors, setTreeErrors] = React14.useState({});
-      const treeGeneration = React14.useRef(0);
-      const treeChildrenRef = React14.useRef({});
-      const treeLoadingRef = React14.useRef(/* @__PURE__ */ new Set());
-      const lastTreeRefresh = React14.useRef(0);
-      const [changes, setChanges] = React14.useState(null);
-      const [changesError, setChangesError] = React14.useState("");
-      const [changesLoading, setChangesLoading] = React14.useState(false);
-      const [changesTick, setChangesTick] = React14.useState(0);
-      const [deselectedChanges, setDeselectedChanges] = React14.useState(() => /* @__PURE__ */ new Set());
-      const [commitMessage, setCommitMessage] = React14.useState("");
-      const messageRef = React14.useRef(null);
-      const [rollbackOpen, setRollbackOpen] = React14.useState(false);
-      const [rollbackBusy, setRollbackBusy] = React14.useState(false);
-      const [rollbackError, setRollbackError] = React14.useState("");
-      const [commitMenu, setCommitMenu] = React14.useState(null);
-      const [remoteJob, setRemoteJob] = React14.useState(null);
-      const remoteClearTimer = React14.useRef(null);
-      const runnerRef = React14.useRef(null);
-      const [commitBusy, setCommitBusy] = React14.useState(false);
-      const [commitAiBusy, setCommitAiBusy] = React14.useState(false);
-      const [commitError, setCommitError] = React14.useState("");
-      const [actionDialog, setActionDialog] = React14.useState(null);
-      const [actionBusy, setActionBusy] = React14.useState(false);
-      const [actionError, setActionError] = React14.useState("");
-      const [leftWidth, setLeftWidth] = React14.useState(() => layout.readWidth("left", MIN_LEFT, MAX_LEFT));
-      const [rightWidth, setRightWidth] = React14.useState(() => layout.readWidth("right", MIN_RIGHT, MAX_RIGHT));
-      const [changesHeight, setChangesHeight] = React14.useState(
+      const rootRef = React16.useRef(null);
+      const [api] = React16.useState(() => new GitApi());
+      const [layout] = React16.useState(() => new LayoutStore());
+      const [notices] = React16.useState(() => new NoticeCenter());
+      const [repos, setRepos] = React16.useState(null);
+      const [repoId, setRepoId] = React16.useState("");
+      const [reposError, setReposError] = React16.useState("");
+      const [reposTick, setReposTick] = React16.useState(0);
+      const [log, setLog] = React16.useState(null);
+      const [logError, setLogError] = React16.useState("");
+      const [loadingLog, setLoadingLog] = React16.useState(false);
+      const [refValue, setRefValue] = React16.useState("");
+      const [reloadTick, setReloadTick] = React16.useState(0);
+      const [query, setQuery] = React16.useState("");
+      const [selected, setSelected] = React16.useState("");
+      const [scope, setScope] = React16.useState("");
+      const [details, setDetails] = React16.useState(null);
+      const [detailsError, setDetailsError] = React16.useState("");
+      const [loadingDetails, setLoadingDetails] = React16.useState(false);
+      const [compare, setCompare] = React16.useState(null);
+      const [diff, setDiff] = React16.useState(null);
+      const [diffError, setDiffError] = React16.useState("");
+      const [loadingDiff, setLoadingDiff] = React16.useState(false);
+      const [treeChildren, setTreeChildren] = React16.useState({});
+      const [treeExpanded, setTreeExpanded] = React16.useState(() => /* @__PURE__ */ new Set());
+      const [treeLoading, setTreeLoading] = React16.useState(() => /* @__PURE__ */ new Set());
+      const [treeErrors, setTreeErrors] = React16.useState({});
+      const treeGeneration = React16.useRef(0);
+      const treeChildrenRef = React16.useRef({});
+      const treeLoadingRef = React16.useRef(/* @__PURE__ */ new Set());
+      const lastTreeRefresh = React16.useRef(0);
+      const [changes, setChanges] = React16.useState(null);
+      const [changesError, setChangesError] = React16.useState("");
+      const [changesLoading, setChangesLoading] = React16.useState(false);
+      const [changesTick, setChangesTick] = React16.useState(0);
+      const [changesView, setChangesView] = React16.useState(() => layout.readChangesView());
+      const [deselectedChanges, setDeselectedChanges] = React16.useState(() => /* @__PURE__ */ new Set());
+      const [commitMessage, setCommitMessage] = React16.useState("");
+      const messageRef = React16.useRef(null);
+      const [rollbackOpen, setRollbackOpen] = React16.useState(false);
+      const [rollbackBusy, setRollbackBusy] = React16.useState(false);
+      const [rollbackError, setRollbackError] = React16.useState("");
+      const [commitMenu, setCommitMenu] = React16.useState(null);
+      const [remoteJob, setRemoteJob] = React16.useState(null);
+      const remoteClearTimer = React16.useRef(null);
+      const runnerRef = React16.useRef(null);
+      const [commitBusy, setCommitBusy] = React16.useState(false);
+      const [commitAiBusy, setCommitAiBusy] = React16.useState(false);
+      const [commitError, setCommitError] = React16.useState("");
+      const [actionDialog, setActionDialog] = React16.useState(null);
+      const [actionBusy, setActionBusy] = React16.useState(false);
+      const [actionError, setActionError] = React16.useState("");
+      const [leftWidth, setLeftWidth] = React16.useState(() => layout.readWidth("left", MIN_LEFT, MAX_LEFT));
+      const [rightWidth, setRightWidth] = React16.useState(() => layout.readWidth("right", MIN_RIGHT, MAX_RIGHT));
+      const [changesHeight, setChangesHeight] = React16.useState(
         () => layout.readWidth("changes", MIN_CHANGES, 900)
       );
-      const [leftHeight, setLeftHeight] = React14.useState(0);
-      const leftRef = React14.useRef(null);
-      const [panelWidth, setPanelWidth] = React14.useState(1200);
-      const [compact, setCompact] = React14.useState(false);
-      const [copied, setCopied] = React14.useState(false);
-      const copyTimer = React14.useRef(null);
-      const [repoNotice, setRepoNotice] = React14.useState(null);
-      React14.useEffect(() => notices.subscribe(setRepoNotice), [notices]);
-      const applyScope = React14.useCallback((next) => {
+      const [leftHeight, setLeftHeight] = React16.useState(0);
+      const leftRef = React16.useRef(null);
+      const [panelWidth, setPanelWidth] = React16.useState(1200);
+      const [compact, setCompact] = React16.useState(false);
+      const [copied, setCopied] = React16.useState(false);
+      const copyTimer = React16.useRef(null);
+      const [repoNotice, setRepoNotice] = React16.useState(null);
+      React16.useEffect(() => notices.subscribe(setRepoNotice), [notices]);
+      const reportMessage = React16.useCallback(
+        (context, message, detail = "") => {
+          notices.show(message || translate("errorUnknown"), "error", {
+            title: translate(errorTitleKey(context)),
+            detail,
+            sticky: true
+          });
+        },
+        [notices, translate]
+      );
+      const reportError = React16.useCallback(
+        (context, error) => {
+          if (isAbort(error)) return;
+          const info = normalizeError(error);
+          if (info.kind === "abort") return;
+          console.error(`[git-view] ${context}:`, error);
+          reportMessage(context, info.message, info.detail);
+        },
+        [reportMessage]
+      );
+      React16.useEffect(() => {
+        const onError = (event) => {
+          const value = event.error ?? event.message;
+          if (!isPluginError(value) && !isPluginError(event.filename)) return;
+          reportError("window", value);
+        };
+        const onRejection = (event) => {
+          if (!isPluginError(event.reason)) return;
+          event.preventDefault();
+          reportError("promise", event.reason);
+        };
+        window.addEventListener("error", onError);
+        window.addEventListener("unhandledrejection", onRejection);
+        return () => {
+          window.removeEventListener("error", onError);
+          window.removeEventListener("unhandledrejection", onRejection);
+        };
+      }, [reportError]);
+      const applyScope = React16.useCallback((next) => {
         setScope(next);
         setSelected("");
         setDetails(null);
@@ -3711,7 +4137,7 @@ window.__ModuleLoader__.load({
         setDiffError("");
         setCommitError("");
       }, []);
-      const selectRepo = React14.useCallback(
+      const selectRepo = React16.useCallback(
         (next) => {
           setRepoId(next);
           setRefValue("");
@@ -3732,7 +4158,7 @@ window.__ModuleLoader__.load({
         },
         [applyScope, layout, notices]
       );
-      const resetTree = React14.useCallback(() => {
+      const resetTree = React16.useCallback(() => {
         treeGeneration.current += 1;
         treeChildrenRef.current = {};
         treeLoadingRef.current = /* @__PURE__ */ new Set();
@@ -3741,7 +4167,7 @@ window.__ModuleLoader__.load({
         setTreeLoading(/* @__PURE__ */ new Set());
         setTreeErrors({});
       }, []);
-      const loadTree = React14.useCallback(
+      const loadTree = React16.useCallback(
         async (path, options = {}) => {
           if (!repoId) return;
           if (treeLoadingRef.current.has(path)) return;
@@ -3783,7 +4209,7 @@ window.__ModuleLoader__.load({
         },
         [repoId, refValue, api]
       );
-      const refreshTree = React14.useCallback(async () => {
+      const refreshTree = React16.useCallback(async () => {
         if (!repoId) return;
         const paths = /* @__PURE__ */ new Set([""]);
         for (const key of Object.keys(treeChildrenRef.current)) {
@@ -3791,7 +4217,7 @@ window.__ModuleLoader__.load({
         }
         for (const path of paths) await loadTree(path, { force: true });
       }, [repoId, loadTree]);
-      React14.useEffect(() => {
+      React16.useEffect(() => {
         const controller = new AbortController();
         setRepos(null);
         setReposError("");
@@ -3807,17 +4233,17 @@ window.__ModuleLoader__.load({
         });
         return () => controller.abort();
       }, [reposTick, selectRepo, api, layout]);
-      React14.useEffect(() => {
+      React16.useEffect(() => {
         resetTree();
         if (!repoId) return;
         void loadTree("");
       }, [repoId, refValue, resetTree, loadTree]);
-      React14.useEffect(() => {
+      React16.useEffect(() => {
         if (!repoId || reloadTick === 0) return;
         lastTreeRefresh.current = Date.now();
         void refreshTree();
       }, [reloadTick, repoId, refreshTree]);
-      React14.useEffect(() => {
+      React16.useEffect(() => {
         if (!repoId || changesTick === 0) return;
         if (document.hidden) return;
         const now = Date.now();
@@ -3825,7 +4251,7 @@ window.__ModuleLoader__.load({
         lastTreeRefresh.current = now;
         void refreshTree();
       }, [changesTick, repoId, refreshTree]);
-      React14.useEffect(() => {
+      React16.useEffect(() => {
         if (!repoId) {
           setLog(null);
           setLogError("");
@@ -3854,7 +4280,7 @@ window.__ModuleLoader__.load({
         });
         return () => controller.abort();
       }, [repoId, refValue, scope, reloadTick, api]);
-      React14.useEffect(() => {
+      React16.useEffect(() => {
         if (!repoId) {
           setChanges(null);
           setChangesError("");
@@ -3883,7 +4309,7 @@ window.__ModuleLoader__.load({
         });
         return () => controller.abort();
       }, [repoId, changesTick, reloadTick, api]);
-      React14.useEffect(() => {
+      React16.useEffect(() => {
         if (!repoId) return void 0;
         const timer = window.setInterval(() => {
           if (typeof document !== "undefined" && document.hidden) return;
@@ -3891,7 +4317,7 @@ window.__ModuleLoader__.load({
         }, STATUS_POLL_MS);
         return () => window.clearInterval(timer);
       }, [repoId]);
-      React14.useEffect(() => {
+      React16.useEffect(() => {
         if (!repoId || !selected) {
           setDetails(null);
           setDetailsError("");
@@ -3915,7 +4341,7 @@ window.__ModuleLoader__.load({
         });
         return () => controller.abort();
       }, [repoId, selected, scope, reloadTick, api]);
-      React14.useEffect(() => {
+      React16.useEffect(() => {
         if (!repoId || !compare) {
           setDiff(null);
           setDiffError("");
@@ -3941,7 +4367,7 @@ window.__ModuleLoader__.load({
         });
         return () => controller.abort();
       }, [repoId, compare, api]);
-      React14.useEffect(() => {
+      React16.useEffect(() => {
         const node = rootRef.current;
         if (!node) return void 0;
         const measure = () => {
@@ -3956,7 +4382,7 @@ window.__ModuleLoader__.load({
         observer.observe(node);
         return () => observer.disconnect();
       }, []);
-      React14.useEffect(() => {
+      React16.useEffect(() => {
         const node = leftRef.current;
         if (!node) return void 0;
         const measure = () => setLeftHeight(node.clientHeight);
@@ -3966,14 +4392,14 @@ window.__ModuleLoader__.load({
         observer.observe(node);
         return () => observer.disconnect();
       }, [compact, repoId, repos]);
-      React14.useEffect(
+      React16.useEffect(
         () => () => {
           if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
           if (remoteClearTimer.current !== null) window.clearTimeout(remoteClearTimer.current);
         },
         []
       );
-      React14.useEffect(() => {
+      React16.useEffect(() => {
         const key = "git-view:work-in-progress";
         const working = commitMessage.trim().length > 0 || commitBusy || commitAiBusy || rollbackBusy || actionBusy || rollbackOpen || actionDialog !== null || compare !== null;
         if (working) holdFreshnessReload(key);
@@ -3992,21 +4418,21 @@ window.__ModuleLoader__.load({
         MIN_CHANGES,
         leftHeight > 0 ? leftHeight - MIN_TREE - (SPLIT_SIZE + 1) : 900
       );
-      React14.useEffect(() => {
+      React16.useEffect(() => {
         setLeftWidth((value) => Math.min(value, maxLeft));
       }, [maxLeft]);
-      React14.useEffect(() => {
+      React16.useEffect(() => {
         if (!compact) setRightWidth((value) => Math.min(value, maxRight));
       }, [compact, maxRight]);
-      React14.useEffect(() => {
+      React16.useEffect(() => {
         setChangesHeight((value) => Math.min(Math.max(value, MIN_CHANGES), maxChanges));
       }, [maxChanges]);
-      const commits = React14.useMemo(
+      const commits = React16.useMemo(
         () => log && Array.isArray(log.commits) ? log.commits : [],
         [log]
       );
-      const rows = React14.useMemo(() => computeRows(commits), [commits]);
-      const graphWidth = React14.useMemo(() => {
+      const rows = React16.useMemo(() => computeRows(commits), [commits]);
+      const graphWidth = React16.useMemo(() => {
         let laneCount = 1;
         for (const row of rows) laneCount = Math.max(laneCount, row.width);
         return GRAPH_PAD * 2 + laneCount * LANE_WIDTH;
@@ -4014,7 +4440,7 @@ window.__ModuleLoader__.load({
       const centerWidth = compact ? panelWidth - leftWidth - SPLIT_SIZE : panelWidth - leftWidth - rightWidth - SPLIT_SIZE * 2;
       const narrowCenter = centerWidth < graphWidth + TABLE_CHROME_WIDTH;
       const normalizedQuery = query.trim().toLowerCase();
-      const matches = React14.useMemo(() => {
+      const matches = React16.useMemo(() => {
         if (!normalizedQuery) return null;
         const result = /* @__PURE__ */ new Set();
         commits.forEach((commit, index) => {
@@ -4026,24 +4452,24 @@ window.__ModuleLoader__.load({
         });
         return result;
       }, [commits, normalizedQuery]);
-      const selectedCommit = React14.useMemo(
+      const selectedCommit = React16.useMemo(
         () => commits.find((commit) => commit.hash === selected) || null,
         [commits, selected]
       );
-      const repo = React14.useMemo(
+      const repo = React16.useMemo(
         () => (repos || []).find((entry) => entry.id === repoId) || null,
         [repos, repoId]
       );
-      const visibleChanges = React14.useMemo(
+      const visibleChanges = React16.useMemo(
         () => (changes || []).filter((entry) => inScope(entry.path, scope)),
         [changes, scope]
       );
-      const selectedChangePaths = React14.useMemo(
+      const selectedChangePaths = React16.useMemo(
         () => visibleChanges.filter((entry) => !deselectedChanges.has(entry.path)).map((entry) => entry.path),
         [visibleChanges, deselectedChanges]
       );
-      const selectedChangeSet = React14.useMemo(() => new Set(selectedChangePaths), [selectedChangePaths]);
-      const copyHash = React14.useCallback(async (hash) => {
+      const selectedChangeSet = React16.useMemo(() => new Set(selectedChangePaths), [selectedChangePaths]);
+      const copyHash = React16.useCallback(async (hash) => {
         try {
           await navigator.clipboard.writeText(hash);
           setCopied(true);
@@ -4052,24 +4478,24 @@ window.__ModuleLoader__.load({
         } catch {
         }
       }, []);
-      const refresh = React14.useCallback(() => {
+      const refresh = React16.useCallback(() => {
         setReloadTick((value) => value + 1);
       }, []);
-      const retryRepos = React14.useCallback(() => {
+      const retryRepos = React16.useCallback(() => {
         setReposTick((value) => value + 1);
       }, []);
-      const chooseCommit = React14.useCallback((hash) => {
+      const chooseCommit = React16.useCallback((hash) => {
         setSelected(hash);
         setCompare(null);
       }, []);
-      const changeRef = React14.useCallback(
+      const changeRef = React16.useCallback(
         (value) => {
           setRefValue(value);
           applyScope("");
         },
         [applyScope]
       );
-      const selectTreeNode = React14.useCallback(
+      const selectTreeNode = React16.useCallback(
         (entry) => {
           if (!entry) {
             applyScope("");
@@ -4088,7 +4514,7 @@ window.__ModuleLoader__.load({
         },
         [applyScope, loadTree]
       );
-      const toggleDir = React14.useCallback(
+      const toggleDir = React16.useCallback(
         (path) => {
           const isOpen = treeExpanded.has(path);
           setTreeExpanded((previous) => {
@@ -4101,20 +4527,20 @@ window.__ModuleLoader__.load({
         },
         [treeExpanded, loadTree]
       );
-      const retryTreeRoot = React14.useCallback(() => {
+      const retryTreeRoot = React16.useCallback(() => {
         void loadTree("");
       }, [loadTree]);
-      const openCompare = React14.useCallback(
+      const openCompare = React16.useCallback(
         (entry) => {
           if (!selected) return;
           setCompare({ file: entry, hash: selected });
         },
         [selected]
       );
-      const closeCompare = React14.useCallback(() => {
+      const closeCompare = React16.useCallback(() => {
         setCompare(null);
       }, []);
-      const toggleChange = React14.useCallback((path) => {
+      const toggleChange = React16.useCallback((path) => {
         setDeselectedChanges((previous) => {
           const next = new Set(previous);
           if (next.has(path)) next.delete(path);
@@ -4122,7 +4548,7 @@ window.__ModuleLoader__.load({
           return next;
         });
       }, []);
-      const toggleAllChanges = React14.useCallback(() => {
+      const toggleAllChanges = React16.useCallback(() => {
         setDeselectedChanges((previous) => {
           const allSelected = visibleChanges.length > 0 && visibleChanges.every((entry) => !previous.has(entry.path));
           const next = new Set(previous);
@@ -4133,10 +4559,27 @@ window.__ModuleLoader__.load({
           return next;
         });
       }, [visibleChanges]);
-      const refreshChanges = React14.useCallback(() => {
+      const toggleChangePaths = React16.useCallback((paths, select) => {
+        setDeselectedChanges((previous) => {
+          const next = new Set(previous);
+          for (const path of paths) {
+            if (select) next.delete(path);
+            else next.add(path);
+          }
+          return next;
+        });
+      }, []);
+      const changeChangesView = React16.useCallback(
+        (next) => {
+          setChangesView(next);
+          layout.writeChangesView(next);
+        },
+        [layout]
+      );
+      const refreshChanges = React16.useCallback(() => {
         setChangesTick((value) => value + 1);
       }, []);
-      const performCommit = React14.useCallback(async () => {
+      const performCommit = React16.useCallback(async () => {
         if (!repoId || commitBusy) return;
         if (selectedChangePaths.length === 0) {
           setCommitError(translate("commitSelectRequired"));
@@ -4164,12 +4607,13 @@ window.__ModuleLoader__.load({
           setReloadTick((value) => value + 1);
           setChangesTick((value) => value + 1);
         } catch (error) {
-          setCommitError(errorText(error));
+          setCommitError("");
+          reportError("commit", error);
         } finally {
           setCommitBusy(false);
         }
-      }, [repoId, commitBusy, selectedChangePaths, commitMessage, translate, api]);
-      const generateMessage = React14.useCallback(async () => {
+      }, [repoId, commitBusy, selectedChangePaths, commitMessage, translate, api, reportError]);
+      const generateMessage = React16.useCallback(async () => {
         if (!repoId || commitBusy || commitAiBusy) return;
         if (selectedChangePaths.length === 0) {
           setCommitError(translate("commitSelectRequired"));
@@ -4197,21 +4641,22 @@ window.__ModuleLoader__.load({
             }
           });
         } catch (error) {
-          setCommitError(errorText(error));
+          setCommitError("");
+          reportError("ai", error);
         } finally {
           setCommitAiBusy(false);
         }
-      }, [repoId, commitBusy, commitAiBusy, selectedChangePaths, translate, api]);
-      const commitSelected = React14.useCallback(() => {
+      }, [repoId, commitBusy, commitAiBusy, selectedChangePaths, translate, api, reportError]);
+      const commitSelected = React16.useCallback(() => {
         void performCommit();
       }, [performCommit]);
-      const showRepoNotice = React14.useCallback(
-        (text, kind = "ok") => {
-          notices.show(text, kind);
+      const showRepoNotice = React16.useCallback(
+        (text) => {
+          notices.show(text, "ok");
         },
         [notices]
       );
-      const runRemote = React14.useCallback(
+      const runRemote = React16.useCallback(
         async (op, options = {}) => {
           if (!repoId) return;
           setActionBusy(true);
@@ -4251,7 +4696,7 @@ window.__ModuleLoader__.load({
             } else if (snapshot.state === "cancelled") {
               showRepoNotice(translate("remoteCancelled"));
             } else {
-              showRepoNotice(snapshot.error || translate("remoteFailed"), "error");
+              reportMessage("remote", snapshot.error || translate("remoteFailed"), (snapshot.lines || []).join("\n"));
             }
             if (remoteClearTimer.current !== null) window.clearTimeout(remoteClearTimer.current);
             remoteClearTimer.current = window.setTimeout(() => setRemoteJob(null), REMOTE_STRIP_MS);
@@ -4259,40 +4704,28 @@ window.__ModuleLoader__.load({
             setActionBusy(false);
             if (isAbort(error)) return;
             if (!started) {
-              setActionError(errorText(error));
+              reportError("remote", error);
               return;
             }
             setRemoteJob((previous) => remoteErrorSnapshot(previous, op, errorText(error)));
             runner.clear();
+            reportError("remote", error);
           }
         },
-        [repoId, api, translate, showRepoNotice, refresh]
+        [repoId, api, translate, showRepoNotice, refresh, reportError, reportMessage]
       );
-      const requestRemote = React14.useCallback(
-        (op) => {
+      const requestRemote = React16.useCallback(
+        (op, options = {}) => {
           if (!repoId) return;
-          if (op === "fetch") {
-            void runRemote("fetch");
-            return;
-          }
-          setActionError("");
-          setActionDialog({
-            kind: "remote",
-            op,
-            title: op === "pull" ? translate("pull") : translate("push"),
-            description: op === "pull" ? translate("pullHint") : translate("pushHint"),
-            checkboxLabel: op === "pull" ? translate("pullRebase") : translate("forceWithLease"),
-            checkboxDefault: false,
-            confirmLabel: op === "pull" ? translate("pull") : translate("push")
-          });
+          void runRemote(op, options);
         },
-        [repoId, runRemote, translate]
+        [repoId, runRemote]
       );
-      const cancelRemoteJob = React14.useCallback(() => {
+      const cancelRemoteJob = React16.useCallback(() => {
         if (!repoId || !remoteJob || remoteJob.state !== "running") return;
         void runnerRef.current?.cancel(repoId);
       }, [repoId, remoteJob]);
-      const executeBranchOp = React14.useCallback(
+      const executeBranchOp = React16.useCallback(
         async (op, payload) => {
           if (!repoId || actionBusy) return false;
           setActionBusy(true);
@@ -4313,14 +4746,20 @@ window.__ModuleLoader__.load({
               setRefValue("");
             }
             setCommitError("");
+            setActionError("");
+            setActionDialog(null);
             refresh();
             setChangesTick((value) => value + 1);
             return true;
           } catch (error) {
             if (isOperationError(error)) {
-              showRepoNotice(errorText(error), "error");
-            } else {
+              setActionDialog(null);
+              setActionError("");
+              reportError("branch", error);
+            } else if (actionDialog) {
               setActionError(errorText(error));
+            } else {
+              reportError("branch", error);
             }
             refresh();
             setChangesTick((value) => value + 1);
@@ -4329,9 +4768,9 @@ window.__ModuleLoader__.load({
             setActionBusy(false);
           }
         },
-        [repoId, actionBusy, refValue, translate, showRepoNotice, refresh, api]
+        [repoId, actionBusy, refValue, translate, showRepoNotice, refresh, api, reportError, actionDialog]
       );
-      const executeDiscard = React14.useCallback(
+      const executeDiscard = React16.useCallback(
         async (entry) => {
           if (!repoId || actionBusy || !entry) return;
           setActionBusy(true);
@@ -4350,7 +4789,7 @@ window.__ModuleLoader__.load({
         },
         [repoId, actionBusy, translate, showRepoNotice, api]
       );
-      const resolveConflict = React14.useCallback(
+      const resolveConflict = React16.useCallback(
         async (entry) => {
           if (!repoId || actionBusy || !entry) return;
           setActionBusy(true);
@@ -4360,14 +4799,14 @@ window.__ModuleLoader__.load({
             showRepoNotice(`${translate("resolved")} · ${entry.path}`);
             setChangesTick((value) => value + 1);
           } catch (error) {
-            showRepoNotice(errorText(error), "error");
+            reportError("discard", error);
           } finally {
             setActionBusy(false);
           }
         },
-        [repoId, actionBusy, translate, showRepoNotice, api]
+        [repoId, actionBusy, translate, showRepoNotice, api, reportError]
       );
-      const requestDiscard = React14.useCallback(
+      const requestDiscard = React16.useCallback(
         (entry) => {
           if (!entry) return;
           const reason = entry.conflict ? translate("discardConflict") : entry.untracked ? translate("discardUntracked") : entry.x === "A" ? translate("discardAdded") : entry.status === "D" ? translate("discardDeleted") : translate("discardModified");
@@ -4383,7 +4822,7 @@ window.__ModuleLoader__.load({
         },
         [translate]
       );
-      const executeRollback = React14.useCallback(
+      const executeRollback = React16.useCallback(
         async (paths, deleteAdded) => {
           if (!repoId || rollbackBusy) return;
           setRollbackBusy(true);
@@ -4404,7 +4843,7 @@ window.__ModuleLoader__.load({
         },
         [repoId, rollbackBusy, translate, showRepoNotice, api]
       );
-      const executeHistoryOp = React14.useCallback(
+      const executeHistoryOp = React16.useCallback(
         async (op, hashArg) => {
           if (!repoId || actionBusy) return void 0;
           const hash = hashArg || (details && details.hash ? details.hash : "");
@@ -4426,12 +4865,8 @@ window.__ModuleLoader__.load({
             setChangesTick((value) => value + 1);
             return result;
           } catch (error) {
-            if (isOperationError(error)) {
-              showRepoNotice(errorText(error), "error");
-              setActionDialog(null);
-            } else {
-              setActionError(errorText(error));
-            }
+            setActionDialog(null);
+            reportError("history", error);
             refresh();
             setChangesTick((value) => value + 1);
             return null;
@@ -4439,9 +4874,9 @@ window.__ModuleLoader__.load({
             setActionBusy(false);
           }
         },
-        [repoId, actionBusy, details, translate, showRepoNotice, refresh, api]
+        [repoId, actionBusy, details, translate, showRepoNotice, refresh, api, reportError]
       );
-      const requestHistoryOp = React14.useCallback(
+      const requestHistoryOp = React16.useCallback(
         (op, hashArg) => {
           const hash = hashArg || (details && details.hash ? details.hash : "");
           if (op !== "undo" && !hash) return;
@@ -4458,7 +4893,7 @@ window.__ModuleLoader__.load({
         },
         [details, translate]
       );
-      const requestAbortOperation = React14.useCallback(() => {
+      const requestAbortOperation = React16.useCallback(() => {
         setActionError("");
         setActionDialog({
           kind: "branch",
@@ -4469,7 +4904,7 @@ window.__ModuleLoader__.load({
           danger: true
         });
       }, [translate]);
-      const buildCommitMenu = React14.useCallback(
+      const buildCommitMenu = React16.useCallback(
         (commit) => {
           const head = log && log.head ? log.head.hash : "";
           const isHead = Boolean(head) && commit.hash === head;
@@ -4527,14 +4962,14 @@ window.__ModuleLoader__.load({
         },
         [log, translate, copyHash, requestHistoryOp]
       );
-      const openCommitMenu = React14.useCallback((commit, point) => {
+      const openCommitMenu = React16.useCallback((commit, point) => {
         setSelected(commit.hash);
         setCommitMenu({ commit, x: point.x, y: point.y });
       }, []);
-      const continueBranchOperation = React14.useCallback(() => {
+      const continueBranchOperation = React16.useCallback(() => {
         void executeBranchOp("continue", {});
       }, [executeBranchOp]);
-      const confirmAction = React14.useCallback(
+      const confirmAction = React16.useCallback(
         ({ value, checked }) => {
           const dialog = actionDialog;
           if (!dialog || actionBusy) return;
@@ -4544,13 +4979,6 @@ window.__ModuleLoader__.load({
           }
           if (dialog.kind === "history") {
             void executeHistoryOp(dialog.op ?? "");
-            return;
-          }
-          if (dialog.kind === "remote") {
-            void runRemote(
-              dialog.op === "pull" ? "pull" : "push",
-              dialog.op === "pull" ? { rebase: Boolean(checked) } : { forceWithLease: Boolean(checked) }
-            );
             return;
           }
           const payload = { ...dialog.payload || {} };
@@ -4571,19 +4999,19 @@ window.__ModuleLoader__.load({
           if (dialog.op === "delete") payload.force = Boolean(checked);
           void executeBranchOp(dialog.op || "", payload);
         },
-        [actionDialog, actionBusy, executeBranchOp, executeDiscard, executeHistoryOp, runRemote, translate]
+        [actionDialog, actionBusy, executeBranchOp, executeDiscard, executeHistoryOp, translate]
       );
-      const closeActionDialog = React14.useCallback(() => {
+      const closeActionDialog = React16.useCallback(() => {
         if (actionBusy) return;
         setActionDialog(null);
         setActionError("");
       }, [actionBusy]);
-      const refEntry = React14.useMemo(() => {
+      const refEntry = React16.useMemo(() => {
         if (!refValue || !log || !Array.isArray(log.refs)) return null;
         return log.refs.find((entry) => entry.ref === refValue) || null;
       }, [log, refValue]);
       const branchState = log && log.state ? log.state : null;
-      const buildBranchMenu = React14.useCallback(
+      const buildBranchMenu = React16.useCallback(
         (entry) => {
           const items = [];
           const current = branchState && branchState.branch ? branchState.branch : "";
@@ -4760,7 +5188,7 @@ window.__ModuleLoader__.load({
         },
         [branchState, translate, executeBranchOp, refValue]
       );
-      const branchOptions = React14.useMemo(() => {
+      const branchOptions = React16.useMemo(() => {
         const options = [
           { value: "", label: translate("allRefs"), icon: "all", actions: buildBranchMenu(null) }
         ];
@@ -4776,13 +5204,13 @@ window.__ModuleLoader__.load({
         }
         return options;
       }, [log, translate, buildBranchMenu]);
-      const treePane = h14(
+      const treePane = h16(
         "div",
         { className: "gv-pane gv-pane-left", style: { width: `${leftWidth}px`, flexBasis: `${leftWidth}px` } },
-        h14(
+        h16(
           "div",
           { className: "gv-left", ref: leftRef },
-          h14(FileTreePane, {
+          h16(FileTreePane, {
             t: translate,
             repo,
             scope,
@@ -4795,7 +5223,7 @@ window.__ModuleLoader__.load({
             onToggle: toggleDir,
             onRetryRoot: retryTreeRoot
           }),
-          h14(ResizeHandle, {
+          h16(ResizeHandle, {
             t: translate,
             axis: "y",
             label: translate("resizeChanges"),
@@ -4810,7 +5238,7 @@ window.__ModuleLoader__.load({
               layout.writeWidth("changes", DEFAULT_CHANGES);
             }
           }),
-          h14(ChangesPane, {
+          h16(ChangesPane, {
             t: translate,
             repo,
             scope,
@@ -4823,13 +5251,16 @@ window.__ModuleLoader__.load({
             busy: commitBusy,
             disabled: commitBusy || actionBusy,
             aiBusy: commitAiBusy,
-            repoNotice,
+            repoNotice: repoNotice && repoNotice.kind === "ok" ? repoNotice : null,
             repoState: branchState,
             commitError,
             height: changesHeight,
+            view: changesView,
             inputRef: messageRef,
             onToggle: toggleChange,
+            onTogglePaths: toggleChangePaths,
             onToggleAll: toggleAllChanges,
+            onView: changeChangesView,
             onRefresh: refreshChanges,
             onRollback: () => {
               setRollbackError("");
@@ -4845,10 +5276,10 @@ window.__ModuleLoader__.load({
           })
         )
       );
-      const centerPane = h14(
+      const centerPane = h16(
         "div",
         { className: "gv-pane gv-pane-center" },
-        repoId ? h14(CommitPane, {
+        repoId ? h16(CommitPane, {
           t: translate,
           log,
           loading: loadingLog,
@@ -4880,13 +5311,13 @@ window.__ModuleLoader__.load({
           busy: actionBusy
         }) : null
       );
-      const detailsPane = h14(
+      const detailsPane = h16(
         "div",
         {
           className: "gv-pane gv-pane-right",
           style: compact ? void 0 : { width: `${rightWidth}px`, flexBasis: `${rightWidth}px` }
         },
-        h14(DetailsPane, {
+        h16(DetailsPane, {
           t: translate,
           commit: selectedCommit,
           details,
@@ -4901,7 +5332,7 @@ window.__ModuleLoader__.load({
           onHistory: requestHistoryOp
         })
       );
-      const leftHandle = compact ? null : h14(ResizeHandle, {
+      const leftHandle = compact ? null : h16(ResizeHandle, {
         t: translate,
         label: translate("resizeTree"),
         value: leftWidth,
@@ -4915,7 +5346,7 @@ window.__ModuleLoader__.load({
           layout.writeWidth("left", DEFAULT_LEFT);
         }
       });
-      const rightHandle = compact ? null : h14(ResizeHandle, {
+      const rightHandle = compact ? null : h16(ResizeHandle, {
         t: translate,
         label: translate("resizeDetails"),
         value: rightWidth,
@@ -4929,14 +5360,14 @@ window.__ModuleLoader__.load({
           layout.writeWidth("right", DEFAULT_RIGHT);
         }
       });
-      const main = compact ? h14(
+      const main = compact ? h16(
         "div",
         { className: "gv-main gv-main-compact" },
-        h14(
+        h16(
           "div",
           { className: "gv-compact-top" },
           treePane,
-          h14(ResizeHandle, {
+          h16(ResizeHandle, {
             t: translate,
             label: translate("resizeTree"),
             value: leftWidth,
@@ -4952,14 +5383,14 @@ window.__ModuleLoader__.load({
           }),
           centerPane
         ),
-        h14("div", { className: "gv-compact-bottom" }, detailsPane)
-      ) : h14("div", { className: "gv-main" }, treePane, leftHandle, centerPane, rightHandle, detailsPane);
+        h16("div", { className: "gv-compact-bottom" }, detailsPane)
+      ) : h16("div", { className: "gv-main" }, treePane, leftHandle, centerPane, rightHandle, detailsPane);
       const emptyRepos = !repoId && repos !== null;
-      return h14(
+      return h16(
         "div",
         { className: "gv-root", ref: rootRef },
-        h14("style", { key: "gv-style" }, PANEL_CSS),
-        h14(Toolbar, {
+        h16("style", { key: "gv-style" }, PANEL_CSS),
+        h16(Toolbar, {
           t: translate,
           repos,
           repoId,
@@ -4976,19 +5407,25 @@ window.__ModuleLoader__.load({
           sync: branchState,
           syncBusy: actionBusy || Boolean(remoteJob && remoteJob.state === "running"),
           onFetch: () => requestRemote("fetch"),
-          onPull: () => requestRemote("pull"),
-          onPush: () => requestRemote("push")
+          onPull: (rebase) => requestRemote("pull", rebase ? { rebase: true } : {}),
+          onPush: (force) => requestRemote("push", force ? { forceWithLease: true } : {})
         }),
-        remoteJob ? h14(
+        repoNotice && repoNotice.kind === "error" ? h16(ErrorNotice, {
+          key: repoNotice.at,
+          t: translate,
+          notice: repoNotice,
+          onClose: () => notices.clear()
+        }) : null,
+        remoteJob ? h16(
           "div",
           { className: `gv-remote gv-remote-${remoteJob.state}` },
-          remoteJob.state === "running" || remoteJob.state === "cancelling" ? h14("span", { className: "gv-inline-spin", "aria-hidden": true }) : null,
-          h14(
+          remoteJob.state === "running" || remoteJob.state === "cancelling" ? h16("span", { className: "gv-inline-spin", "aria-hidden": true }) : null,
+          h16(
             "span",
             { className: "gv-remote-label" },
             `${translate(remoteOpKey(remoteJob.op))}${remoteJob.percent != null ? ` · ${remoteJob.percent}%` : ""}`
           ),
-          h14(
+          h16(
             "span",
             {
               className: "gv-remote-line",
@@ -4996,37 +5433,30 @@ window.__ModuleLoader__.load({
             },
             remoteJob.lines && remoteJob.lines.length ? remoteJob.lines[remoteJob.lines.length - 1] : remoteJob.error || translate("remoteRunning")
           ),
-          remoteJob.state === "running" ? h14(
+          remoteJob.state === "running" ? h16(
             "button",
             { type: "button", className: "gv-remote-cancel", onClick: cancelRemoteJob },
             translate("cancel")
           ) : null
         ) : null,
-        emptyRepos ? h14(
+        emptyRepos ? h16(
           "div",
           { className: "gv-main-empty" },
-          h14(IconGraphMark, { size: 34 }),
-          h14("div", { className: "gv-state-title" }, translate("noRepos")),
-          h14("div", { className: "gv-state-text" }, translate("noReposHint")),
-          h14(
+          h16(IconGraphMark, { size: 34 }),
+          h16("div", { className: "gv-state-title" }, translate("noRepos")),
+          h16("div", { className: "gv-state-text" }, translate("noReposHint")),
+          h16(
             "button",
             { type: "button", className: "gv-button", onClick: retryRepos },
-            h14(IconRefresh, { size: 13 }),
-            h14("span", null, translate("retry"))
+            h16(IconRefresh, { size: 13 }),
+            h16("span", null, translate("retry"))
           )
-        ) : reposError ? h14(
+        ) : reposError ? h16(
           "div",
           { className: "gv-main-empty" },
-          h14("div", { className: "gv-state-title" }, translate("errorTitle")),
-          h14("div", { className: "gv-state-text" }, reposError),
-          h14(
-            "button",
-            { type: "button", className: "gv-button", onClick: retryRepos },
-            h14(IconRefresh, { size: 13 }),
-            h14("span", null, translate("retry"))
-          )
-        ) : repos === null ? h14("div", { className: "gv-main-empty" }, h14(Spinner, { label: translate("loading") })) : main,
-        compare ? h14(CompareDialog, {
+          h16(ErrorState, { t: translate, message: reposError, onRetry: retryRepos })
+        ) : repos === null ? h16("div", { className: "gv-main-empty" }, h16(Spinner, { label: translate("loading") })) : main,
+        compare ? h16(CompareDialog, {
           t: translate,
           file: compare.file,
           commitHash: compare.hash,
@@ -5035,7 +5465,7 @@ window.__ModuleLoader__.load({
           error: diffError,
           onClose: closeCompare
         }) : null,
-        actionDialog ? h14(ActionDialog, {
+        actionDialog ? h16(ActionDialog, {
           t: translate,
           dialog: actionDialog,
           busy: actionBusy,
@@ -5043,7 +5473,7 @@ window.__ModuleLoader__.load({
           onClose: closeActionDialog,
           onConfirm: confirmAction
         }) : null,
-        rollbackOpen ? h14(RollbackDialog, {
+        rollbackOpen ? h16(RollbackDialog, {
           t: translate,
           entries: visibleChanges,
           busy: rollbackBusy,
@@ -5057,7 +5487,7 @@ window.__ModuleLoader__.load({
             void executeRollback(paths, deleteAdded);
           }
         }) : null,
-        commitMenu ? h14(PopupMenu, {
+        commitMenu ? h16(PopupMenu, {
           t: translate,
           menu: {
             x: commitMenu.x,
@@ -5117,6 +5547,21 @@ window.__ModuleLoader__.load({
       head: "HEAD",
       detached: "游离 HEAD",
       errorTitle: "读取失败",
+      errorCommit: "提交失败",
+      errorBranch: "分支操作失败",
+      errorRemote: "远端操作失败",
+      errorHistory: "提交操作失败",
+      errorDiscard: "撤销更改失败",
+      errorRollback: "回滚失败",
+      errorAi: "生成提交信息失败",
+      errorRead: "读取数据失败",
+      errorUnknown: "发生未知错误",
+      errorDetail: "技术详情",
+      copyDetails: "复制详情",
+      copiedDetails: "已复制",
+      errorBoundaryTitle: "Git 面板渲染失败",
+      errorBoundaryHint: "这是插件内部错误，不是仓库损坏。可以重试；如果反复出现，请复制详情反馈。",
+      retryPanel: "重试",
       fileDiffTruncated: "差异过大，仅显示前一部分",
       statusAdded: "新增",
       statusModified: "修改",
@@ -5149,6 +5594,9 @@ window.__ModuleLoader__.load({
       refreshChanges: "刷新更改",
       selectAll: "全选",
       clearSelection: "清除选择",
+      changesViewToggle: "切换列表/树形",
+      changesViewList: "列表视图",
+      changesViewTree: "树形视图",
       commitMessagePlaceholder: "提交信息",
       commit: "提交",
       commitKeyHint: "Ctrl+Enter 提交",
@@ -5196,6 +5644,8 @@ window.__ModuleLoader__.load({
       pushHint: "把当前分支推送到它的上游；没有上游时推到 origin 并建立跟踪。",
       pullRebase: "用 rebase 而不是 merge",
       forceWithLease: "force-with-lease（远端有别人的提交时会失败）",
+      pullModifierHint: "Shift+点击用 rebase",
+      pushModifierHint: "Shift+点击用 force-with-lease",
       fetchDone: "已抓取远端更新",
       pullDone: "已拉取",
       pushDone: "已推送",
@@ -5293,6 +5743,21 @@ window.__ModuleLoader__.load({
       head: "HEAD",
       detached: "detached HEAD",
       errorTitle: "Could not load",
+      errorCommit: "Commit failed",
+      errorBranch: "Branch operation failed",
+      errorRemote: "Remote operation failed",
+      errorHistory: "Commit operation failed",
+      errorDiscard: "Could not discard changes",
+      errorRollback: "Rollback failed",
+      errorAi: "Could not generate a message",
+      errorRead: "Could not load data",
+      errorUnknown: "Unexpected error",
+      errorDetail: "Technical details",
+      copyDetails: "Copy details",
+      copiedDetails: "Copied",
+      errorBoundaryTitle: "The Git panel failed to render",
+      errorBoundaryHint: "This is an internal plugin error, not a damaged repository. Retry, and copy the details if it keeps happening.",
+      retryPanel: "Retry",
       fileDiffTruncated: "The diff is large; only the beginning is shown",
       statusAdded: "Added",
       statusModified: "Modified",
@@ -5325,6 +5790,9 @@ window.__ModuleLoader__.load({
       refreshChanges: "Refresh changes",
       selectAll: "Select all",
       clearSelection: "Clear",
+      changesViewToggle: "Switch list/tree",
+      changesViewList: "List view",
+      changesViewTree: "Tree view",
       commitMessagePlaceholder: "Commit message",
       commit: "Commit",
       commitKeyHint: "Ctrl+Enter to commit",
@@ -5372,6 +5840,8 @@ window.__ModuleLoader__.load({
       pushHint: "Push the current branch to its upstream; origin is used when none is set.",
       pullRebase: "Rebase instead of merge",
       forceWithLease: "force-with-lease (fails if the remote moved)",
+      pullModifierHint: "Shift+click to rebase",
+      pushModifierHint: "Shift+click for force-with-lease",
       fetchDone: "Fetched remote updates",
       pullDone: "Pulled",
       pushDone: "Pushed",
@@ -5424,7 +5894,85 @@ window.__ModuleLoader__.load({
       selectBranch: "Select branch"
     };
 
+    // src/client/ui/ErrorBoundary.tsx
+    var React17 = __toESM(require("react"), 1);
+    var h17 = React17.createElement;
+    var PanelErrorBoundary = class extends React17.Component {
+      constructor() {
+        super(...arguments);
+        __publicField(this, "state", { error: null });
+        __publicField(this, "timer", null);
+        __publicField(this, "retry", () => {
+          this.setState({ error: null });
+        });
+        __publicField(this, "copy", () => {
+          const error = this.state.error;
+          if (!error) return;
+          try {
+            void navigator.clipboard.writeText(`${error.message}
+
+    ${error.stack || ""}`).catch(() => void 0);
+          } catch {
+          }
+        });
+      }
+      /** React calls this during render; store the error for the crash card. */
+      static getDerivedStateFromError(error) {
+        return { error };
+      }
+      /** Log once so the console still carries the original stack. */
+      componentDidCatch(error, info) {
+        console.error("[git-view] render error", error, info.componentStack);
+      }
+      componentWillUnmount() {
+        if (this.timer) clearTimeout(this.timer);
+      }
+      render() {
+        const { error } = this.state;
+        const { t } = this.props;
+        if (!error) return this.props.children;
+        return h17(
+          "div",
+          { className: "gv-root gv-crash", role: "alert" },
+          h17("style", null, PANEL_CSS),
+          h17(
+            "div",
+            { className: "gv-crash-card" },
+            h17("span", { className: "gv-crash-icon", "aria-hidden": true }, h17(IconAlert, { size: 22 })),
+            h17("div", { className: "gv-crash-title" }, t("errorBoundaryTitle")),
+            h17("div", { className: "gv-crash-text" }, t("errorBoundaryHint")),
+            h17("pre", { className: "gv-crash-detail" }, `${error.message}
+    ${error.stack || ""}`.slice(0, 4e3)),
+            h17(
+              "div",
+              { className: "gv-crash-actions" },
+              h17(
+                "button",
+                { type: "button", className: "gv-button gv-button-primary", onClick: this.retry },
+                h17(IconRefresh, { size: 12 }),
+                h17("span", null, t("retryPanel"))
+              ),
+              h17(
+                "button",
+                { type: "button", className: "gv-button", onClick: this.copy },
+                h17(IconCopy, { size: 12 }),
+                h17("span", null, t("copyDetails"))
+              )
+            )
+          )
+        );
+      }
+    };
+
     // src/client/index.tsx
+    var identity = (key) => key;
+    function GitViewSlot(props) {
+      return React18.createElement(
+        PanelErrorBoundary,
+        { t: props.t ?? identity },
+        React18.createElement(GitViewPanel, props)
+      );
+    }
     var PANEL_ID = "git-view";
     var inject = ["slots", "locale"];
     function apply(ctx) {
@@ -5433,7 +5981,7 @@ window.__ModuleLoader__.load({
       const t = ctx.locale.bind(NS);
       ctx.slots.inject(
         "main",
-        () => ctx.slots.register({ name: "main", key: PANEL_ID, locale: NS }, GitViewPanel)
+        () => ctx.slots.register({ name: "main", key: PANEL_ID, locale: NS }, GitViewSlot)
       );
       ctx.slots.inject(
         "sidebar.panellist",

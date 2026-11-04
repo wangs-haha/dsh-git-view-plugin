@@ -15,8 +15,8 @@
   - 提交图状态栏显示当前分支、领先/落后远程的提交数以及进行中的操作。
 - **远程同步**（工具栏分支下拉右侧的三个按钮）：
   - **抓取**：`git fetch --all --prune --progress`，更新所有远程引用与领先/落后计数。
-  - **拉取**：`git pull --progress --ff`，确认框里可选「用 rebase 而不是 merge」。
-  - **推送**：`git push --progress`；没有上游时自动 `--set-upstream origin <branch>`，确认框里可选 `--force-with-lease`。
+  - **拉取**：`git pull --progress --ff`；**Shift+点击**用 rebase 而不是 merge，不再弹确认框。
+  - **推送**：`git push --progress`；没有上游时自动 `--set-upstream origin <branch>`，**Shift+点击**使用 `--force-with-lease`，不再弹确认框。
   - 三个操作都在后台任务里跑：工具栏下方出现进度行（百分比 + git 最后一行输出），可以取消；结束后自动刷新提交图、引用与领先/落后计数。
   - 认证使用本机已有的 SSH agent / credential helper；面板不弹交互式密码框，认证失败会提示你先在终端完成一次认证。
 - **左侧文件树是工作区视图**：
@@ -30,6 +30,8 @@
   - **「回滚更改」**：多选文件批量还原（未跟踪删除、暂存新增移除、已修改/已删除/冲突恢复到 `HEAD`），并可选择「删除新增文件的本地副本」；单行撤回按钮保留。
   - `Ctrl+Enter` / `⌘+Enter` 提交，`Enter` 在提交信息中换行。
   - 文件状态以颜色、字母和简短标签呈现：**未跟踪**、**已修改**、**已暂存**、**冲突**、**已删除**、**重命名**；顶部还有可滚动的分类计数汇总。
+  - 提交区标题栏可在**列表 / 树形**之间切换：树形按目录分组，目录前的复选框可一次选中/取消该目录下的所有文件；选择结果会记住。
+  - 所有操作失败都走面板顶部的**统一异常横幅**：标题（提交/分支/远端…）、消息、可展开复制的技术详情、关闭按钮；读取失败则在对应面板内显示统一的错误卡片。
 - **中间提交图**：彩色泳道、合并/分叉、refs、作者、日期、短哈希，搜索命中高亮。
 - **提交节点操作**：在提交行上**右键**（或悬停行尾「⋯」、键盘 Shift+F10）打开上下文菜单，菜单按节点状态生成：
   - 复制哈希、复制提交信息；
@@ -42,7 +44,7 @@
 
 ## 使用
 
-1. 刷新页面（客户端代码更新后需要刷新一次）。
+1. 点击左侧边栏 Git 图标打开面板（`pnpm build` 后 HMR 会自动更新，不需要刷新页面）。
 2. 点击左侧边栏 Git 图标。
 3. 选择仓库；在分支下拉里单击分支可筛选历史，点行尾「⋯」执行检出、新建、重命名、删除、合并、变基。
 4. 用分支下拉右侧的三个按钮**抓取 / 拉取 / 推送**；拉取和推送会先确认策略，期间工具栏下方显示实时进度，可取消。
@@ -89,18 +91,20 @@
 pnpm install        # 只需一次
 pnpm typecheck      # tsc --noEmit
 pnpm build          # esbuild → index.js + client.js（包根目录）
-pnpm reload         # 让运行中的 DSH 热加载插件（不需要刷新页面）
+pnpm run reload     # 让运行中的 DSH 热加载插件（不需要刷新页面）
 pnpm smoke          # Host 路由 / 客户端注册 / 面板渲染冒烟测试
-pnpm audit          # 真实 Chrome 计算样式审计（对比度/溢出/几何/令牌）
+pnpm run audit      # 真实 Chrome 计算样式审计（对比度/溢出/几何/令牌）
 pnpm preview        # 亮暗两套整页截图 → build/preview/*.png
 pnpm verify         # 前三步串起来
 ```
 
-- 插件以 junction 方式安装在 profile 里，`pnpm build` 之后刷新页面即可；改动 Host 时若未热重载，重启 DSH。
-- 桌面端没有刷新入口时用 `pnpm build && pnpm reload`：DSH 的 `client-hmr` 每 500ms 轮询每个客户端 bundle，文件 stat 一变就在 `/plugins/events` 广播 `rebuilt` 帧，页面随即卸载并重建该插件（无需刷新整个页面）。`--wait` 会打印服务端发布的 rev，可用来确认推送是否到达。
-- 插件还会**自愈**：面板启动 4 秒后、之后每 60 秒、以及窗口重新可见时，会从 `/plugins/events` 取自己的 bundle 地址，比对编译期写进代码的构建标记（`pnpm build` 会打印 `client build <marker>`）。发现页面跑的是旧构建就自动 `location.reload()` 一次：`sessionStorage` 按标记去重（每个构建最多重载一次，不会循环），页面不可见时不重载，网络或解析失败一律放行。所以即使 HMR 通道已经断开、再也不会收到 `rebuilt` 帧，页面也不会长期停在旧版本——**代价是从没有该逻辑的旧版本升级上来，仍需手动重载一次**。
+> `audit` 与 pnpm 内置的 `pnpm audit`（依赖安全审计）重名，必须写成 `pnpm run audit` 才会执行本插件的脚本。
+
+- 插件以 junction 方式安装在 profile 里。`pnpm build` 后 `client-hmr` 会自动换模块（实测 1 秒级），**不需要刷新页面**；桌面壳刷新页面反而不会重新读取宿主启动时缓存的 boot manifest，只有 HMR 断开时才需要重启 DSH。
+- 桌面端用 `pnpm build && pnpm run reload` 也可以：DSH 的 `client-hmr` 每 500ms 轮询每个客户端 bundle，文件 stat 一变就在 `/plugins/events` 广播 `rebuilt` 帧，页面随即卸载并重建该插件。`--wait` 会打印服务端发布的 rev；脚本优先读 `DSH_WEB_URL` / `DSH_ORIGIN`，不再写死端口。
+- 插件还会**自愈**：面板启动 4 秒后、之后每 60 秒、以及窗口重新可见时，会从 `/plugins/events` 取自己的 bundle 地址，比对编译期写进代码的构建标记（`pnpm build` 会打印 `client build <marker>`）。发现页面跑的是旧构建就自动 `location.reload()` 一次：`sessionStorage` 按标记去重（每个构建最多重载一次，不会循环），页面不可见时不重载，网络或解析失败一律放行。
 - 冒烟测试用临时仓库和 mock 上下文直接调路由，不需要真实 DSH 会话：`scripts/smoke-host.mjs`、`scripts/smoke-client.mjs`、`scripts/smoke-panes.mjs`；`scripts/smoke-selfcheck.mjs` 用假 fetch 断言自愈检查只重载一次且失败放行。
-- 色彩与布局的令牌层、尺寸规范、以及 `pnpm audit` 的判定口径见 [docs/ui-design-system.md](docs/ui-design-system.md)。
+- 色彩与布局的令牌层、尺寸规范、以及 `pnpm run audit` 的判定口径见 [docs/ui-design-system.md](docs/ui-design-system.md)。
 
 ## 安全与限制
 

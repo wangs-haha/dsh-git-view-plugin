@@ -9,6 +9,7 @@ import * as React from 'react'
 import ReactDOM from 'react-dom'
 import { statusClass } from '../format.js'
 import { IconClose } from '../icons.js'
+import { ErrorState } from '../ui/ErrorState.js'
 import { Spinner } from '../ui/Spinner.js'
 import type { CommitFile, DiffPayload, Translate } from '../types.js'
 
@@ -230,12 +231,7 @@ export function CompareDialog({ t, file, commitHash, diff, loading, error, onClo
   if (loading) {
     body = h(Spinner, { label: t('loadingDiff') })
   } else if (error) {
-    body = h(
-      'div',
-      { className: 'gv-details-error' },
-      h('div', { className: 'gv-state-title' }, t('errorTitle')),
-      h('div', { className: 'gv-state-text' }, error),
-    )
+    body = h('div', { className: 'gv-details-error' }, h(ErrorState, { t, message: error }))
   } else if (binary) {
     body = h('div', { className: 'gv-modal-empty' }, t('binaryCompare'))
   } else if (empty || !diff) {

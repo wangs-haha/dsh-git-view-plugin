@@ -29,8 +29,10 @@ export interface ToolbarProps {
   sync: RepoState | null
   syncBusy: boolean
   onFetch: () => void
-  onPull: () => void
-  onPush: () => void
+  /** `rebase` is true when the click carried Shift. */
+  onPull: (rebase: boolean) => void
+  /** `force` is true when the click carried Shift. */
+  onPush: (force: boolean) => void
 }
 
 /**
@@ -117,10 +119,10 @@ export function Toolbar(props: ToolbarProps): React.ReactElement {
         {
           type: 'button',
           className: 'gv-icon-button',
-          title: behind > 0 ? `${t('pull')} · ↓${behind}` : t('pull'),
+          title: behind > 0 ? `${t('pull')} · ↓${behind} · ${t('pullModifierHint')}` : `${t('pull')} · ${t('pullModifierHint')}`,
           'aria-label': t('pull'),
           disabled: remoteDisabled,
-          onClick: onPull,
+          onClick: (event: React.MouseEvent<HTMLButtonElement>) => onPull(event.shiftKey),
         },
         h(IconArrowDown, { size: 14 }),
         behind > 0 ? h('span', { className: 'gv-sync-count gv-sync-behind' }, String(behind)) : null,
@@ -130,10 +132,10 @@ export function Toolbar(props: ToolbarProps): React.ReactElement {
         {
           type: 'button',
           className: 'gv-icon-button',
-          title: ahead > 0 ? `${t('push')} · ↑${ahead}` : t('push'),
+          title: ahead > 0 ? `${t('push')} · ↑${ahead} · ${t('pushModifierHint')}` : `${t('push')} · ${t('pushModifierHint')}`,
           'aria-label': t('push'),
           disabled: remoteDisabled,
-          onClick: onPush,
+          onClick: (event: React.MouseEvent<HTMLButtonElement>) => onPush(event.shiftKey),
         },
         h(IconArrowUp, { size: 14 }),
         ahead > 0 ? h('span', { className: 'gv-sync-count gv-sync-ahead' }, String(ahead)) : null,

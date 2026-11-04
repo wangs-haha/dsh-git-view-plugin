@@ -20,6 +20,7 @@ import {
   MIN_CHANGES,
   MIN_LEFT,
   MIN_RIGHT,
+  type ChangesView,
 } from './layout.js'
 import {
   COMPACT_WIDTH,
@@ -39,6 +40,7 @@ import {
   uiLocale,
 } from './format.js'
 import { IconGraphMark, IconRefresh } from './icons.js'
+import { errorTitleKey, isPluginError, normalizeError } from './errors.js'
 import type { Notice } from './notices.js'
 import { NoticeCenter } from './notices.js'
 import { RemoteRunner } from './remote.js'
@@ -62,6 +64,8 @@ import type {
   TreeEntry,
 } from './types.js'
 import { ActionDialog } from './ui/ActionDialog.js'
+import { ErrorNotice } from './ui/ErrorNotice.js'
+import { ErrorState } from './ui/ErrorState.js'
 import { PopupMenu } from './ui/PopupMenu.js'
 import { ResizeHandle } from './ui/ResizeHandle.js'
 import { RollbackDialog } from './ui/RollbackDialog.js'
@@ -248,6 +252,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
   const [changesError, setChangesError] = React.useState('')
   const [changesLoading, setChangesLoading] = React.useState(false)
   const [changesTick, setChangesTick] = React.useState(0)
+  const [changesView, setChangesView] = React.useState<ChangesView>(() => layout.readChangesView())
   const [deselectedChanges, setDeselectedChanges] = React.useState<Set<string>>(() => new Set())
   const [commitMessage, setCommitMessage] = React.useState('')
   const messageRef = React.useRef<HTMLTextAreaElement | null>(null)
@@ -282,6 +287,63 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
   const [repoNotice, setRepoNotice] = React.useState<Notice | null>(null)
 
   React.useEffect(() => notices.subscribe(setRepoNotice), [notices])
+
+  /**
+   * Show one operation failure in the panel-level exception banner. Every
+   * command funnels through here so the title, message, detail and dismiss
+   * affordance are identical regardless of which pane started it.
+   * @param context - `commit`, `branch`, `remote`, `history`, `discard`, ...
+   * @param message - user-facing message.
+   * @param detail - copyable technical detail.
+   */
+  const reportMessage = React.useCallback(
+    (context: string, message: string, detail = '') => {
+      notices.show(message || translate('errorUnknown'), 'error', {
+        title: translate(errorTitleKey(context)),
+        detail,
+        sticky: true,
+      })
+    },
+    [notices, translate],
+  )
+
+  /**
+   * Normalize a caught value and report it through {@link reportMessage}.
+   * @param context - operation name used for the banner title.
+   * @param error - caught value.
+   */
+  const reportError = React.useCallback(
+    (context: string, error: unknown) => {
+      if (isAbort(error)) return
+      const info = normalizeError(error)
+      if (info.kind === 'abort') return
+      console.error(`[git-view] ${context}:`, error)
+      reportMessage(context, info.message, info.detail)
+    },
+    [reportMessage],
+  )
+
+  // Global safety net: uncaught renderer errors and promise rejections that
+  // originate in this bundle still reach the same banner. Errors from the host
+  // or other plugins are ignored by the bundle-id filter.
+  React.useEffect(() => {
+    const onError = (event: ErrorEvent): void => {
+      const value = event.error ?? event.message
+      if (!isPluginError(value) && !isPluginError(event.filename)) return
+      reportError('window', value)
+    }
+    const onRejection = (event: PromiseRejectionEvent): void => {
+      if (!isPluginError(event.reason)) return
+      event.preventDefault()
+      reportError('promise', event.reason)
+    }
+    window.addEventListener('error', onError)
+    window.addEventListener('unhandledrejection', onRejection)
+    return () => {
+      window.removeEventListener('error', onError)
+      window.removeEventListener('unhandledrejection', onRejection)
+    }
+  }, [reportError])
 
   const applyScope = React.useCallback((next: string) => {
     setScope(next)
@@ -792,6 +854,26 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
     })
   }, [visibleChanges])
 
+  /** Select or deselect every file under one directory (tree view). */
+  const toggleChangePaths = React.useCallback((paths: string[], select: boolean) => {
+    setDeselectedChanges((previous) => {
+      const next = new Set(previous)
+      for (const path of paths) {
+        if (select) next.delete(path)
+        else next.add(path)
+      }
+      return next
+    })
+  }, [])
+
+  const changeChangesView = React.useCallback(
+    (next: ChangesView) => {
+      setChangesView(next)
+      layout.writeChangesView(next)
+    },
+    [layout],
+  )
+
   const refreshChanges = React.useCallback(() => {
     setChangesTick((value) => value + 1)
   }, [])
@@ -824,11 +906,12 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
       setReloadTick((value) => value + 1)
       setChangesTick((value) => value + 1)
     } catch (error) {
-      setCommitError(errorText(error))
+      setCommitError('')
+      reportError('commit', error)
     } finally {
       setCommitBusy(false)
     }
-  }, [repoId, commitBusy, selectedChangePaths, commitMessage, translate, api])
+  }, [repoId, commitBusy, selectedChangePaths, commitMessage, translate, api, reportError])
 
   /**
    * Ask the model for a `type(scope): subject` draft and put it in the
@@ -863,19 +946,20 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         }
       })
     } catch (error) {
-      setCommitError(errorText(error))
+      setCommitError('')
+      reportError('ai', error)
     } finally {
       setCommitAiBusy(false)
     }
-  }, [repoId, commitBusy, commitAiBusy, selectedChangePaths, translate, api])
+  }, [repoId, commitBusy, commitAiBusy, selectedChangePaths, translate, api, reportError])
 
   const commitSelected = React.useCallback(() => {
     void performCommit()
   }, [performCommit])
 
   const showRepoNotice = React.useCallback(
-    (text: string, kind: 'ok' | 'error' = 'ok') => {
-      notices.show(text, kind)
+    (text: string) => {
+      notices.show(text, 'ok')
     },
     [notices],
   )
@@ -927,7 +1011,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         } else if (snapshot.state === 'cancelled') {
           showRepoNotice(translate('remoteCancelled'))
         } else {
-          showRepoNotice(snapshot.error || translate('remoteFailed'), 'error')
+          reportMessage('remote', snapshot.error || translate('remoteFailed'), (snapshot.lines || []).join('\n'))
         }
         if (remoteClearTimer.current !== null) window.clearTimeout(remoteClearTimer.current)
         remoteClearTimer.current = window.setTimeout(() => setRemoteJob(null), REMOTE_STRIP_MS)
@@ -935,39 +1019,30 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         setActionBusy(false)
         if (isAbort(error)) return
         if (!started) {
-          setActionError(errorText(error))
+          reportError('remote', error)
           return
         }
         setRemoteJob((previous) => remoteErrorSnapshot(previous, op, errorText(error)))
         runner.clear()
+        reportError('remote', error)
       }
     },
-    [repoId, api, translate, showRepoNotice, refresh],
+    [repoId, api, translate, showRepoNotice, refresh, reportError, reportMessage],
   )
 
   /**
-   * Fetch runs directly; pull and push confirm their strategy in a dialog.
+   * Run fetch, pull, or push immediately. The progress strip carries running
+   * output; there is no strategy dialog — Shift on pull/push selects rebase /
+   * force-with-lease.
    * @param op - fetch, pull, or push.
+   * @param options - rebase / force-with-lease.
    */
   const requestRemote = React.useCallback(
-    (op: RemoteOp) => {
+    (op: RemoteOp, options: Record<string, boolean> = {}) => {
       if (!repoId) return
-      if (op === 'fetch') {
-        void runRemote('fetch')
-        return
-      }
-      setActionError('')
-      setActionDialog({
-        kind: 'remote',
-        op,
-        title: op === 'pull' ? translate('pull') : translate('push'),
-        description: op === 'pull' ? translate('pullHint') : translate('pushHint'),
-        checkboxLabel: op === 'pull' ? translate('pullRebase') : translate('forceWithLease'),
-        checkboxDefault: false,
-        confirmLabel: op === 'pull' ? translate('pull') : translate('push'),
-      })
+      void runRemote(op, options)
     },
-    [repoId, runRemote, translate],
+    [repoId, runRemote],
   )
 
   const cancelRemoteJob = React.useCallback(() => {
@@ -996,14 +1071,22 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
           setRefValue('')
         }
         setCommitError('')
+        setActionError('')
+        setActionDialog(null)
         refresh()
         setChangesTick((value) => value + 1)
         return true
       } catch (error) {
+        // A paused operation has new repository state to show; a plain input
+        // rejection keeps the prompt open so the name can be corrected.
         if (isOperationError(error)) {
-          showRepoNotice(errorText(error), 'error')
-        } else {
+          setActionDialog(null)
+          setActionError('')
+          reportError('branch', error)
+        } else if (actionDialog) {
           setActionError(errorText(error))
+        } else {
+          reportError('branch', error)
         }
         // A failed merge/rebase may still have changed the repository state.
         refresh()
@@ -1013,7 +1096,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         setActionBusy(false)
       }
     },
-    [repoId, actionBusy, refValue, translate, showRepoNotice, refresh, api],
+    [repoId, actionBusy, refValue, translate, showRepoNotice, refresh, api, reportError, actionDialog],
   )
 
   const executeDiscard = React.useCallback(
@@ -1046,12 +1129,12 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         showRepoNotice(`${translate('resolved')} · ${entry.path}`)
         setChangesTick((value) => value + 1)
       } catch (error) {
-        showRepoNotice(errorText(error), 'error')
+        reportError('discard', error)
       } finally {
         setActionBusy(false)
       }
     },
-    [repoId, actionBusy, translate, showRepoNotice, api],
+    [repoId, actionBusy, translate, showRepoNotice, api, reportError],
   )
 
   const requestDiscard = React.useCallback(
@@ -1128,12 +1211,8 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         setChangesTick((value) => value + 1)
         return result
       } catch (error) {
-        if (isOperationError(error)) {
-          showRepoNotice(errorText(error), 'error')
-          setActionDialog(null)
-        } else {
-          setActionError(errorText(error))
-        }
+        setActionDialog(null)
+        reportError('history', error)
         refresh()
         setChangesTick((value) => value + 1)
         return null
@@ -1141,7 +1220,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         setActionBusy(false)
       }
     },
-    [repoId, actionBusy, details, translate, showRepoNotice, refresh, api],
+    [repoId, actionBusy, details, translate, showRepoNotice, refresh, api, reportError],
   )
 
   const requestHistoryOp = React.useCallback(
@@ -1262,13 +1341,6 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         void executeHistoryOp(dialog.op ?? '')
         return
       }
-      if (dialog.kind === 'remote') {
-        void runRemote(
-          dialog.op === 'pull' ? 'pull' : 'push',
-          dialog.op === 'pull' ? { rebase: Boolean(checked) } : { forceWithLease: Boolean(checked) },
-        )
-        return
-      }
       const payload: Record<string, unknown> = { ...(dialog.payload || {}) }
       if (dialog.input) {
         const name = String(value || '').trim()
@@ -1287,7 +1359,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
       if (dialog.op === 'delete') payload.force = Boolean(checked)
       void executeBranchOp(dialog.op || '', payload)
     },
-    [actionDialog, actionBusy, executeBranchOp, executeDiscard, executeHistoryOp, runRemote, translate],
+    [actionDialog, actionBusy, executeBranchOp, executeDiscard, executeHistoryOp, translate],
   )
 
   const closeActionDialog = React.useCallback(() => {
@@ -1564,13 +1636,16 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         busy: commitBusy,
         disabled: commitBusy || actionBusy,
         aiBusy: commitAiBusy,
-        repoNotice,
+        repoNotice: repoNotice && repoNotice.kind === 'ok' ? repoNotice : null,
         repoState: branchState,
         commitError,
         height: changesHeight,
+        view: changesView,
         inputRef: messageRef,
         onToggle: toggleChange,
+        onTogglePaths: toggleChangePaths,
         onToggleAll: toggleAllChanges,
+        onView: changeChangesView,
         onRefresh: refreshChanges,
         onRollback: () => {
           setRollbackError('')
@@ -1733,9 +1808,17 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
       sync: branchState,
       syncBusy: actionBusy || Boolean(remoteJob && remoteJob.state === 'running'),
       onFetch: () => requestRemote('fetch'),
-      onPull: () => requestRemote('pull'),
-      onPush: () => requestRemote('push'),
+      onPull: (rebase: boolean) => requestRemote('pull', rebase ? { rebase: true } : {}),
+      onPush: (force: boolean) => requestRemote('push', force ? { forceWithLease: true } : {}),
     }),
+    repoNotice && repoNotice.kind === 'error'
+      ? h(ErrorNotice, {
+          key: repoNotice.at,
+          t: translate,
+          notice: repoNotice,
+          onClose: () => notices.clear(),
+        })
+      : null,
     remoteJob
       ? h(
           'div',
@@ -1785,14 +1868,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         ? h(
             'div',
             { className: 'gv-main-empty' },
-            h('div', { className: 'gv-state-title' }, translate('errorTitle')),
-            h('div', { className: 'gv-state-text' }, reposError),
-            h(
-              'button',
-              { type: 'button', className: 'gv-button', onClick: retryRepos },
-              h(IconRefresh, { size: 13 }),
-              h('span', null, translate('retry')),
-            ),
+            h(ErrorState, { t: translate, message: reposError, onRetry: retryRepos }),
           )
         : repos === null
           ? h('div', { className: 'gv-main-empty' }, h(Spinner, { label: translate('loading') }))

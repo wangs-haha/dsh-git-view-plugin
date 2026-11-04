@@ -10,7 +10,24 @@ import { GitViewPanel } from './app.js'
 import { en, NS, zh } from './i18n.js'
 import { GitViewIcon } from './icons.js'
 import { installFreshnessCheck } from './selfcheck.js'
+import { PanelErrorBoundary } from './ui/ErrorBoundary.js'
 import type { Translate } from './types.js'
+
+const identity: Translate = (key: string): string => key
+
+/**
+ * Slot component: the panel plus its last-resort error boundary, so a render
+ * failure keeps the frame and shows the crash card instead of a blank slot.
+ * @param props - translator handed down by the host slot.
+ * @returns the bounded panel.
+ */
+function GitViewSlot(props: { t?: Translate }): React.ReactElement {
+  return React.createElement(
+    PanelErrorBoundary,
+    { t: props.t ?? identity },
+    React.createElement(GitViewPanel, props),
+  )
+}
 
 /** Sidebar entry id and the main-panel key it opens. */
 export const PANEL_ID = 'git-view'
@@ -55,7 +72,7 @@ export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
 
   ctx.slots.inject('main', () =>
-    ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS }, GitViewPanel),
+    ctx.slots.register({ name: 'main', key: PANEL_ID, locale: NS }, GitViewSlot),
   )
 
   ctx.slots.inject('sidebar.panellist', () =>

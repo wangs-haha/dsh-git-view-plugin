@@ -10,11 +10,11 @@
 import { MIN_CHANGES } from './metrics.js'
 
 /**
- * Left column floor: below ~204px the changes header (title, count, select-all,
- * rollback, refresh) starts clipping its own buttons, so the resize stops
- * there instead of letting the header fall apart.
+ * Left column floor: below ~230px the changes header (title, count, view
+ * toggle, select-all, rollback, refresh) starts clipping its own buttons, so
+ * the resize stops there instead of letting the header fall apart.
  */
-export const MIN_LEFT = 208
+export const MIN_LEFT = 232
 export const MAX_LEFT = 460
 export const MIN_RIGHT = 240
 export const MAX_RIGHT = 660
@@ -26,6 +26,9 @@ export const DEFAULT_RIGHT = 360
 export const DEFAULT_CHANGES = 360
 
 export type WidthKey = 'left' | 'right' | 'changes'
+
+/** How the commit area lists working-tree changes. */
+export type ChangesView = 'list' | 'tree'
 
 export const LAYOUT_DEFAULTS: Record<WidthKey, number> = {
   left: DEFAULT_LEFT,
@@ -86,6 +89,24 @@ export class LayoutStore {
   writeRepo(id: string): void {
     try {
       if (id) this.storage?.setItem(REPO_KEY, id)
+    } catch {
+      /* private mode */
+    }
+  }
+
+  /** Last picked changes layout: flat list (default) or directory tree. */
+  readChangesView(): ChangesView {
+    try {
+      return this.storage?.getItem(`${KEY_PREFIX}.changesView`) === 'tree' ? 'tree' : 'list'
+    } catch {
+      return 'list'
+    }
+  }
+
+  /** Persist the changes layout. */
+  writeChangesView(view: ChangesView): void {
+    try {
+      this.storage?.setItem(`${KEY_PREFIX}.changesView`, view)
     } catch {
       /* private mode */
     }

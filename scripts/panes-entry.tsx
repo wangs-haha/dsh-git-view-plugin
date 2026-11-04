@@ -45,6 +45,67 @@ const entry: StatusEntry = {
   conflict: false,
 }
 
+const treeEntries: StatusEntry[] = [
+  entry,
+  {
+    path: 'src/panes/ChangesPane.tsx',
+    status: 'A',
+    x: 'A',
+    y: ' ',
+    untracked: true,
+    staged: true,
+    unstaged: false,
+    conflict: false,
+  },
+  {
+    path: 'README.md',
+    status: '?',
+    x: '?',
+    y: '?',
+    untracked: true,
+    staged: false,
+    unstaged: true,
+    conflict: false,
+  },
+]
+
+/** One ChangesPane fixture; the tree case only overrides view/entries. */
+function changesCase(overrides: Record<string, unknown>): React.ReactElement {
+  return React.createElement(ChangesPane as never, {
+    t,
+    repo,
+    scope: '',
+    entries: [entry],
+    totalCount: 1,
+    loading: false,
+    error: '',
+    selected: new Set(['src/app.ts']),
+    message: 'feat(panel): add remote sync',
+    busy: false,
+    disabled: false,
+    aiBusy: false,
+    repoNotice: null,
+    repoState: state,
+    commitError: '',
+    height: 260,
+    view: 'list',
+    onToggle: noop,
+    onTogglePaths: noop,
+    onToggleAll: noop,
+    onView: noop,
+    onRefresh: noop,
+    onRollback: noop,
+    onMessage: noop,
+    onCommit: noop,
+    onGenerate: noop,
+    onDiscard: noop,
+    onResolve: noop,
+    onContinue: noop,
+    onAbort: noop,
+    ...overrides,
+  })
+}
+
 const commits: CommitRow[] = [
   {
     hash: 'aaa1111',
@@ -189,35 +250,15 @@ export const CASES: Array<{ name: string; element: React.ReactElement }> = [
   },
   {
     name: 'ChangesPane',
-    element: React.createElement(ChangesPane as never, {
-      t,
-      repo,
-      scope: '',
-      entries: [entry],
-      totalCount: 1,
-      loading: false,
-      error: '',
-      selected: new Set(['src/app.ts']),
-      message: 'feat(panel): add remote sync',
-      busy: false,
-      disabled: false,
-      aiBusy: false,
-      notice: '',
-      repoNotice: null,
-      repoState: state,
-      commitError: '',
-      height: 260,
-      onToggle: noop,
-      onToggleAll: noop,
-      onRefresh: noop,
-      onRollback: noop,
-      onMessage: noop,
-      onCommit: noop,
-      onGenerate: noop,
-      onDiscard: noop,
-      onResolve: noop,
-      onContinue: noop,
-      onAbort: noop,
+    element: changesCase({}),
+  },
+  {
+    name: 'ChangesPane (tree)',
+    element: changesCase({
+      view: 'tree',
+      entries: treeEntries,
+      selected: new Set(['src/app.ts', 'src/panes/ChangesPane.tsx']),
+      totalCount: treeEntries.length,
     }),
   },
   {

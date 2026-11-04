@@ -7,6 +7,7 @@
  */
 import * as React from 'react'
 import { PANEL_CSS } from '../src/client/styles.js'
+import { ErrorNotice } from '../src/client/ui/ErrorNotice.js'
 import { CASES } from './panes-entry.js'
 
 const h = React.createElement
@@ -99,6 +100,23 @@ const statesPanel = h(
   ),
 )
 
+const errorBanner = h(
+  'div',
+  { className: 'gv-root', style: { height: '200px', display: 'flex', flexDirection: 'column' } },
+  h(ErrorNotice, {
+    t: (key: string) => key,
+    notice: {
+      kind: 'error',
+      title: '分支操作失败',
+      text: '创建分支失败：分支已存在',
+      detail: 'HTTP 409\nGitApiError: branch already exists\n    at GitViewPanel (client.js:1200:13)',
+      sticky: true,
+      at: 1,
+    },
+    onClose: () => {},
+  }),
+)
+
 /** One labelled block in the gallery. */
 function shot(label: string, element: React.ReactNode, height: string, wide = false): React.ReactElement {
   return h(
@@ -115,6 +133,7 @@ export const GALLERY: React.ReactElement = h(
   { className: 'gallery' },
   styleTag,
   shot('Controls: toolbar + dropdown', h('div', { className: 'gv-root' }, fixture('Toolbar'), h('div', { className: 'gv-toolbar' }, fixture('Dropdown'), h('div', { className: 'gv-spacer' }), h('div', { className: 'gv-sync' }, h('button', { type: 'button', className: 'gv-icon-button' }, h('span', null, '↑'))))), '180px', true),
+  shot('Exception banner', errorBanner, '220px', true),
   shot('Full panel (tree + changes | graph | details)', fullPanel, '800px', true),
   shot('Compact panel (details below)', compactPanel, '660px'),
   shot('States: error, paused merge, conflict notice', statesPanel, '560px'),

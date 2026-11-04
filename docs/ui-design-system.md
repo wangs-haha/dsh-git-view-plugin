@@ -1,6 +1,6 @@
 # 面板视觉规范（色彩 / 布局令牌）
 
-> 适用版本：0.5.0 起。本文描述 `src/client/styles.ts` 的令牌层、`src/client/metrics.ts` 的尺寸单一来源，以及用 `pnpm audit` 得到的可复核结论。
+> 适用版本：0.5.0 起。本文描述 `src/client/styles.ts` 的令牌层、`src/client/metrics.ts` 的尺寸单一来源，以及用 `pnpm run audit` 得到的可复核结论。
 
 ## 1. 目标
 
@@ -14,7 +14,7 @@
 | 亮色下 35 处小字不达 4.5:1 | 直接把 `#22c55e` / `#f59e0b` / `#ec1313` 当文字颜色，铺在白底或 12% 同色底上 |
 | 行高、字号、圆角、控件高度各写各的 | CSS 里出现 8.5–14px 共 11 级字号、3–12px 共 10 级圆角、18–32px 共 7 种控件高度 |
 
-现在所有颜色都来自**一层语义令牌**，尺寸来自**一个 metrics 模块**，并且用 `pnpm audit` 在真实浏览器里复核数值。
+现在所有颜色都来自**一层语义令牌**，尺寸来自**一个 metrics 模块**，并且用 `pnpm run audit` 在真实浏览器里复核数值。
 
 ## 2. 颜色令牌
 
@@ -119,11 +119,11 @@
 ## 4. 如何复核
 
 ```powershell
-pnpm audit     # 真实 Chrome 计算样式审计：对比度 / 溢出 / 几何 / 令牌 / 规则解析
+pnpm run audit # 真实 Chrome 计算样式审计：对比度 / 溢出 / 几何 / 令牌 / 规则解析
 pnpm preview   # 亮暗两套整页截图 → build/preview/*.png
 ```
 
-`pnpm audit` 用假 React 把 `scripts/preview-entry.tsx` 里的夹具（工具栏、三栏、紧凑布局、各种状态、菜单、三个弹窗）序列化成静态页，套上**宿主真实的 `--dsw-*` 令牌**（取自 `dsh-client-ui-theme`），再在 headless Chrome 里：
+`pnpm run audit` 用假 React 把 `scripts/preview-entry.tsx` 里的夹具（工具栏、三栏、紧凑布局、各种状态、菜单、三个弹窗）序列化成静态页，套上**宿主真实的 `--dsw-*` 令牌**（取自 `dsh-client-ui-theme`），再在 headless Chrome 里：
 
 1. 逐元素取 `color` 与**合成后**的祖先背景（含半透明叠加），按 WCAG 2.1 计算对比度，长篇/大字号用 3:1；
 2. 检查每个 `.gv-*` 元素是否被裁切或越界（徽章、长路径、窄容器）；

@@ -6,7 +6,8 @@
 import * as React from 'react'
 import { shortDate, fullDate, operationLabel } from '../format.js'
 import { COLUMNS } from '../metrics.js'
-import { IconClose, IconFolder, IconGraphMark, IconMore, IconRefresh } from '../icons.js'
+import { IconClose, IconFolder, IconGraphMark, IconMore } from '../icons.js'
+import { ErrorState } from '../ui/ErrorState.js'
 import { Spinner } from '../ui/Spinner.js'
 import type { CommitRow, LogPayload, RepoState, Translate } from '../types.js'
 import { DEFAULT_COLOR, GRAPH_PAD, LANE_WIDTH, ROW_HEIGHT } from './graph.js'
@@ -205,18 +206,7 @@ export function CommitPane(props: CommitPaneProps): React.ReactElement {
   if (!log && (loading || !error)) {
     content = h(Spinner, { label: t('loading') })
   } else if (error) {
-    content = h(
-      'div',
-      { className: 'gv-state' },
-      h('div', { className: 'gv-state-title' }, t('errorTitle')),
-      h('div', { className: 'gv-state-text' }, error),
-      h(
-        'button',
-        { type: 'button', className: 'gv-button', onClick: onRefresh },
-        h(IconRefresh, { size: 13 }),
-        h('span', null, t('retry')),
-      ),
-    )
+    content = h('div', { className: 'gv-state' }, h(ErrorState, { t, message: error, onRetry: onRefresh }))
   } else if (commits.length === 0) {
     content = h(
       'div',

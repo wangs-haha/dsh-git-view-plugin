@@ -62,6 +62,12 @@ const fakeReact = {
   createContext: (value) => ({ Provider: null, Consumer: null, _value: value }),
   memo: (component) => component,
   forwardRef: (render) => render,
+  Component: class {
+    constructor(props) {
+      this.props = props
+    }
+    setState() {}
+  },
 }
 const fakeReactDom = { createPortal: (node) => node }
 
@@ -120,7 +126,11 @@ check('registers sidebar entry', names.includes('sidebar.panellist:git-view'))
 
 try {
   const tree = panel({ t: (key) => key })
-  check('renders first frame', Boolean(tree) && tree.type === 'div', JSON.stringify(tree)?.slice(0, 120))
+  check(
+    'renders first frame',
+    Boolean(tree) && (tree.type === 'div' || typeof tree.type === 'function'),
+    JSON.stringify(tree)?.slice(0, 120),
+  )
 } catch (error) {
   console.error('FAIL first render threw:', error)
   process.exit(1)

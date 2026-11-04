@@ -51,6 +51,12 @@ const fakeReact = {
   createContext: (value) => ({ Provider: null, Consumer: null, _value: value }),
   memo: (component) => component,
   forwardRef: (render) => render,
+  Component: class {
+    constructor(props) {
+      this.props = props
+    }
+    setState() {}
+  },
 }
 const fakeReactDom = { createPortal: (node) => node }
 
