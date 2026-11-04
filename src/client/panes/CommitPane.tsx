@@ -5,6 +5,7 @@
  */
 import * as React from 'react'
 import { shortDate, fullDate, operationLabel } from '../format.js'
+import { COLUMNS } from '../metrics.js'
 import { IconClose, IconFolder, IconGraphMark, IconMore, IconRefresh } from '../icons.js'
 import { Spinner } from '../ui/Spinner.js'
 import type { CommitRow, LogPayload, RepoState, Translate } from '../types.js'
@@ -192,7 +193,7 @@ export function CommitPane(props: CommitPaneProps): React.ReactElement {
 
   const columns = narrow
     ? `${graphWidth}px minmax(0, 1fr)`
-    : `${graphWidth}px minmax(140px, 1fr) 96px 82px 64px`
+    : `${graphWidth}px minmax(140px, 1fr) ${COLUMNS.author}px ${COLUMNS.date}px ${COLUMNS.hash}px`
   const branch =
     log && log.head
       ? log.head.detached

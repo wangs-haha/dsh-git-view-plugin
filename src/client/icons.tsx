@@ -1,9 +1,10 @@
 /**
  * Inline SVG icons for the Git panel.
  *
- * Markup is byte-identical to the legacy client bundle: same paths, viewBoxes,
- * stroke widths and aria-hidden flags. Icons inherit the surrounding text
- * colour unless a component sets an explicit style.
+ * Glyphs share one visual language: 1.3–2px strokes, round caps, 24×24 viewBox,
+ * `currentColor` unless a component passes a colour. File and folder icons use
+ * `--gv-hue-*` / `--gv-folder*` tokens instead of hex literals, so a language
+ * keeps its identity on both the light and the dark theme.
  */
 import * as React from 'react'
 
@@ -28,76 +29,84 @@ export interface FileVisual {
   kind: string
 }
 
-const FILE_VISUALS: Record<string, readonly [string, string] | undefined> = {
-  ts: ['#3b82f6', 'code'],
-  tsx: ['#3b82f6', 'code'],
-  js: ['#eab308', 'code'],
-  jsx: ['#eab308', 'code'],
-  mjs: ['#eab308', 'code'],
-  cjs: ['#eab308', 'code'],
-  java: ['#f97316', 'code'],
-  kt: ['#a855f7', 'code'],
-  py: ['#60a5fa', 'code'],
-  rb: ['#ef4444', 'code'],
-  go: ['#06b6d4', 'code'],
-  rs: ['#f97316', 'code'],
-  c: ['#3b82f6', 'code'],
-  h: ['#8b5cf6', 'code'],
-  cpp: ['#3b82f6', 'code'],
-  cs: ['#a855f7', 'code'],
-  php: ['#8b5cf6', 'code'],
-  swift: ['#f97316', 'code'],
-  vue: ['#10b981', 'code'],
-  svelte: ['#ef4444', 'code'],
-  md: ['#7dd3fc', 'doc'],
-  mdx: ['#7dd3fc', 'doc'],
-  txt: ['#94a3b8', 'doc'],
-  rst: ['#94a3b8', 'doc'],
-  json: ['#eab308', 'data'],
-  jsonc: ['#eab308', 'data'],
-  yml: ['#a855f7', 'data'],
-  yaml: ['#a855f7', 'data'],
-  toml: ['#a855f7', 'data'],
-  ini: ['#a855f7', 'data'],
-  xml: ['#f59e0b', 'data'],
-  sql: ['#f59e0b', 'data'],
-  csv: ['#22c55e', 'data'],
-  css: ['#ec4899', 'style'],
-  scss: ['#ec4899', 'style'],
-  sass: ['#ec4899', 'style'],
-  less: ['#ec4899', 'style'],
-  html: ['#ef4444', 'code'],
-  htm: ['#ef4444', 'code'],
-  sh: ['#22c55e', 'shell'],
-  bash: ['#22c55e', 'shell'],
-  zsh: ['#22c55e', 'shell'],
-  ps1: ['#22c55e', 'shell'],
-  bat: ['#22c55e', 'shell'],
-  cmd: ['#22c55e', 'shell'],
-  png: ['#a855f7', 'image'],
-  jpg: ['#a855f7', 'image'],
-  jpeg: ['#a855f7', 'image'],
-  gif: ['#a855f7', 'image'],
-  webp: ['#a855f7', 'image'],
-  svg: ['#a855f7', 'image'],
-  ico: ['#a855f7', 'image'],
-  lock: ['#94a3b8', 'file'],
-  gitignore: ['#94a3b8', 'file'],
-  env: ['#eab308', 'file'],
+/**
+ * File identity is a hue name plus a glyph family.
+ *
+ * The hue names map to `--gv-hue-*` tokens, so a file colour adapts to the
+ * theme instead of being a fixed hex that only looks right on one background.
+ * Eight hues cover every language; the previous table used eighteen hex values,
+ * several of which were near-duplicates of each other.
+ */
+const FILE_HUES: Record<string, readonly [string, string] | undefined> = {
+  ts: ['blue', 'code'],
+  tsx: ['blue', 'code'],
+  js: ['blue', 'code'],
+  jsx: ['blue', 'code'],
+  mjs: ['blue', 'code'],
+  cjs: ['blue', 'code'],
+  c: ['blue', 'code'],
+  cpp: ['blue', 'code'],
+  h: ['blue', 'code'],
+  java: ['orange', 'code'],
+  rs: ['orange', 'code'],
+  swift: ['orange', 'code'],
+  kt: ['purple', 'code'],
+  cs: ['purple', 'code'],
+  php: ['purple', 'code'],
+  py: ['cyan', 'code'],
+  go: ['cyan', 'code'],
+  rb: ['red', 'code'],
+  svelte: ['red', 'code'],
+  html: ['red', 'code'],
+  htm: ['red', 'code'],
+  vue: ['green', 'code'],
+  md: ['blue', 'doc'],
+  mdx: ['blue', 'doc'],
+  txt: ['slate', 'doc'],
+  rst: ['slate', 'doc'],
+  json: ['amber', 'data'],
+  jsonc: ['amber', 'data'],
+  yml: ['purple', 'data'],
+  yaml: ['purple', 'data'],
+  toml: ['purple', 'data'],
+  ini: ['purple', 'data'],
+  xml: ['orange', 'data'],
+  sql: ['orange', 'data'],
+  csv: ['green', 'data'],
+  css: ['pink', 'style'],
+  scss: ['pink', 'style'],
+  sass: ['pink', 'style'],
+  less: ['pink', 'style'],
+  sh: ['green', 'shell'],
+  bash: ['green', 'shell'],
+  zsh: ['green', 'shell'],
+  ps1: ['green', 'shell'],
+  bat: ['green', 'shell'],
+  cmd: ['green', 'shell'],
+  png: ['purple', 'image'],
+  jpg: ['purple', 'image'],
+  jpeg: ['purple', 'image'],
+  gif: ['purple', 'image'],
+  webp: ['purple', 'image'],
+  svg: ['purple', 'image'],
+  ico: ['purple', 'image'],
+  lock: ['slate', 'file'],
+  gitignore: ['slate', 'file'],
+  env: ['amber', 'file'],
 }
 
 /**
  * Colour and glyph family for a file name, keyed by extension.
  * @param name - file name.
- * @returns the visual identity.
+ * @returns the visual identity; `color` is a theme token reference.
  */
 export function fileVisual(name: string): FileVisual {
   const lower = String(name || '').toLowerCase()
   const dot = lower.lastIndexOf('.')
   const ext = dot >= 0 ? lower.slice(dot + 1) : lower
-  const found = FILE_VISUALS[ext]
-  if (found) return { color: found[0], kind: found[1] }
-  return { color: '#8b96a8', kind: 'file' }
+  const found = FILE_HUES[ext]
+  if (found) return { color: `var(--gv-hue-${found[0]})`, kind: found[1] }
+  return { color: 'var(--gv-hue-slate)', kind: 'file' }
 }
 
 /** Commit-graph mark used by empty states and the details placeholder. */
@@ -389,7 +398,7 @@ export function GitViewIcon({ size = 18 }: IconProps): React.ReactElement {
 /** Coloured folder/file glyph used by the tree, details, and change rows. */
 export function FileIcon({ name, isDir = false, open = false, size = 13 }: FileIconProps): React.ReactElement {
   if (isDir) {
-    const color = open ? '#f0b429' : '#e0a33e'
+    const color = open ? 'var(--gv-folder-open)' : 'var(--gv-folder)'
     return h(
       'svg',
       { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': true, style: { color } },

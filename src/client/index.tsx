@@ -9,6 +9,7 @@ import * as React from 'react'
 import { GitViewPanel } from './app.js'
 import { en, NS, zh } from './i18n.js'
 import { GitViewIcon } from './icons.js'
+import { installFreshnessCheck } from './selfcheck.js'
 import type { Translate } from './types.js'
 
 /** Sidebar entry id and the main-panel key it opens. */
@@ -48,6 +49,9 @@ export const inject = ['slots', 'locale']
  */
 export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'git-view: dictionaries')
+  // A rebuilt plugin must never leave a stale panel behind: the host has no
+  // reload entry and its HMR channel is a one-shot subscription.
+  ctx.effect(() => installFreshnessCheck(), 'git-view: bundle freshness')
   const t = ctx.locale.bind(NS)
 
   ctx.slots.inject('main', () =>

@@ -6,29 +6,34 @@
  * Keeping it out of the component makes the layout testable and lets the panel
  * compute the graph width once per log payload.
  */
+import { ROW_HEIGHT } from '../metrics.js'
 import type { CommitRow } from '../types.js'
 
-/** Height of one commit row, shared by the table and the SVG cell. */
-export const ROW_HEIGHT = 30
+export { ROW_HEIGHT }
+
 /** Horizontal distance between two lanes. */
 export const LANE_WIDTH = 16
 /** Left and right padding inside the graph column. */
 export const GRAPH_PAD = 10
-/** Colour used for a lane that never received a palette entry. */
-export const DEFAULT_COLOR = '#8b96a8'
+/**
+ * Colour used for a lane that never received a palette entry.
+ *
+ * Lane colours are theme tokens, not hex literals: `--gv-hue-*` mixes the hue
+ * with the theme's label colour, so the same lane reads correctly on a light
+ * and on a dark surface. The stylesheet owns the definitions.
+ */
+export const DEFAULT_COLOR = 'var(--gv-hue-slate)'
 
-/** Lane colours tuned for both light and dark surfaces. */
+/** Lane colours, in assignment order. One hue per lane, no near-duplicates. */
 export const PALETTE: readonly string[] = [
-  '#3b82f6',
-  '#f59e0b',
-  '#10b981',
-  '#ef4444',
-  '#8b5cf6',
-  '#06b6d4',
-  '#ec4899',
-  '#84cc16',
-  '#f97316',
-  '#14b8a6',
+  'var(--gv-hue-blue)',
+  'var(--gv-hue-amber)',
+  'var(--gv-hue-green)',
+  'var(--gv-hue-red)',
+  'var(--gv-hue-purple)',
+  'var(--gv-hue-cyan)',
+  'var(--gv-hue-pink)',
+  'var(--gv-hue-orange)',
 ]
 
 /** One edge from this row's node to a parent lane. */

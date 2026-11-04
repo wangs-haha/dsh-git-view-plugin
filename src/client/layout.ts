@@ -3,20 +3,33 @@
  *
  * A single store owns the localStorage keys so components never touch storage
  * directly; bumping `VERSION` resets stale layouts without losing data.
+ *
+ * The defaults live here next to the clamps so the "reset" gesture (double-click
+ * a split) restores exactly what a fresh install gets.
  */
+import { MIN_CHANGES } from './metrics.js'
 
-export const MIN_LEFT = 160
+/**
+ * Left column floor: below ~204px the changes header (title, count, select-all,
+ * rollback, refresh) starts clipping its own buttons, so the resize stops
+ * there instead of letting the header fall apart.
+ */
+export const MIN_LEFT = 208
 export const MAX_LEFT = 460
 export const MIN_RIGHT = 240
 export const MAX_RIGHT = 660
-export const MIN_CHANGES = 300
+
+export { MIN_CHANGES }
+
+export const DEFAULT_LEFT = 280
+export const DEFAULT_RIGHT = 360
 export const DEFAULT_CHANGES = 360
 
 export type WidthKey = 'left' | 'right' | 'changes'
 
 export const LAYOUT_DEFAULTS: Record<WidthKey, number> = {
-  left: 280,
-  right: 360,
+  left: DEFAULT_LEFT,
+  right: DEFAULT_RIGHT,
   changes: DEFAULT_CHANGES,
 }
 

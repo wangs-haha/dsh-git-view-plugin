@@ -6,17 +6,23 @@
  * - `client.js`  the browser half, wrapped in the module-loader factory so
  *                `require('react')` resolves against the page runtime.
  *
+ * The client bundle also carries a build marker, which the panel uses to notice
+ * that the page is still running an older build and reload itself (see
+ * `src/client/selfcheck.ts`).
+ *
  * Sources live in `src/`; both files are generated and should not be edited by
  * hand. Run `pnpm build`.
  */
 import { build } from 'esbuild'
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = dirname(fileURLToPath(import.meta.url))
 const out = (name) => join(root, '..', name)
 const pluginId = '@local/dsh-git-view'
+/** Unique per build: two builds of identical sources still differ. */
+const buildMarker = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
 
 await rm(out('build'), { recursive: true, force: true })
 
@@ -36,6 +42,10 @@ await build({
   entryPoints: [out('src/client/index.tsx')],
   outfile: out('build/client.body.js'),
   bundle: true,
+  define: {
+    __GV_BUILD__: JSON.stringify(buildMarker),
+    __GV_PLUGIN_ID__: JSON.stringify(pluginId),
+  },
   platform: 'browser',
   format: 'cjs',
   target: ['es2020'],
@@ -64,6 +74,4 @@ ${indented}
 
 await writeFile(out('client.js'), wrapped, 'utf8')
 await rm(out('build'), { recursive: true, force: true })
-console.log('built index.js and client.js')
-
-
+console.log(`built index.js and client.js (client build ${buildMarker})`)

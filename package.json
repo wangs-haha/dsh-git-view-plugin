@@ -27,7 +27,10 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "build": "node scripts/build.mjs",
-    "smoke": "node scripts/smoke-host.mjs && node scripts/smoke-client.mjs && node scripts/smoke-panes.mjs",
+    "reload": "node scripts/reload.mjs --wait",
+    "smoke": "node scripts/smoke-host.mjs && node scripts/smoke-client.mjs && node scripts/smoke-panes.mjs && node scripts/smoke-selfcheck.mjs",
+    "audit": "node scripts/audit.mjs",
+    "preview": "node scripts/preview.mjs",
     "verify": "pnpm typecheck && pnpm build && pnpm smoke"
   },
   "dsh": {

@@ -12,6 +12,8 @@ import * as React from 'react'
 import { GitApi, errorText, isAbort } from './api.js'
 import {
   DEFAULT_CHANGES,
+  DEFAULT_LEFT,
+  DEFAULT_RIGHT,
   LayoutStore,
   MAX_LEFT,
   MAX_RIGHT,
@@ -19,6 +21,13 @@ import {
   MIN_LEFT,
   MIN_RIGHT,
 } from './layout.js'
+import {
+  COMPACT_WIDTH,
+  MIN_CENTER,
+  MIN_TREE,
+  SPLIT_SIZE,
+  TABLE_CHROME_WIDTH,
+} from './metrics.js'
 import {
   historyHintKey,
   historyLabelKey,
@@ -33,6 +42,7 @@ import { IconGraphMark, IconRefresh } from './icons.js'
 import type { Notice } from './notices.js'
 import { NoticeCenter } from './notices.js'
 import { RemoteRunner } from './remote.js'
+import { holdFreshnessReload, releaseFreshnessReload } from './selfcheck.js'
 import { PANEL_CSS } from './styles.js'
 import type {
   CommitDetails,
@@ -67,12 +77,6 @@ import { GRAPH_PAD, LANE_WIDTH } from './panes/graph.js'
 
 const h = React.createElement
 
-/** Minimum height kept for the file tree above the changes list. */
-const MIN_TREE = 140
-/** Minimum width kept for the commit pane next to both side panes. */
-const MIN_CENTER = 300
-/** Panel width below which the side panes stack. */
-const COMPACT_WIDTH = 980
 /** Interval of the working-tree status poll. */
 const STATUS_POLL_MS = 20_000
 /** Minimum gap between two tree refreshes triggered by the status poll. */
@@ -594,12 +598,37 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
     [],
   )
 
+  // A rebuilt plugin reloads the page to pick up new code; never let that throw
+  // away unsent work. While a draft message, a running action, or an open modal
+  // exists, the reload is held and the self-check retries on its next tick.
+  React.useEffect(() => {
+    const key = 'git-view:work-in-progress'
+    const working =
+      commitMessage.trim().length > 0 ||
+      commitBusy ||
+      commitAiBusy ||
+      rollbackBusy ||
+      actionBusy ||
+      rollbackOpen ||
+      actionDialog !== null ||
+      compare !== null
+    if (working) holdFreshnessReload(key)
+    else releaseFreshnessReload(key)
+    return () => releaseFreshnessReload(key)
+  }, [commitMessage, commitBusy, commitAiBusy, rollbackBusy, actionBusy, rollbackOpen, actionDialog, compare])
+
   const maxLeft = Math.max(
     MIN_LEFT,
-    Math.min(MAX_LEFT, panelWidth - (compact ? 0 : rightWidth) - MIN_CENTER - 12),
+    Math.min(MAX_LEFT, panelWidth - (compact ? 0 : rightWidth) - MIN_CENTER - SPLIT_SIZE * 2),
   )
-  const maxRight = Math.max(MIN_RIGHT, Math.min(MAX_RIGHT, panelWidth - leftWidth - MIN_CENTER - 12))
-  const maxChanges = Math.max(MIN_CHANGES, leftHeight > 0 ? leftHeight - MIN_TREE - 7 : 900)
+  const maxRight = Math.max(
+    MIN_RIGHT,
+    Math.min(MAX_RIGHT, panelWidth - leftWidth - MIN_CENTER - SPLIT_SIZE * 2),
+  )
+  const maxChanges = Math.max(
+    MIN_CHANGES,
+    leftHeight > 0 ? leftHeight - MIN_TREE - (SPLIT_SIZE + 1) : 900,
+  )
 
   React.useEffect(() => {
     setLeftWidth((value) => Math.min(value, maxLeft))
@@ -624,9 +653,9 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
     return GRAPH_PAD * 2 + laneCount * LANE_WIDTH
   }, [rows])
   const centerWidth = compact
-    ? panelWidth - leftWidth - 6
-    : panelWidth - leftWidth - rightWidth - 12
-  const narrowCenter = centerWidth < graphWidth + 446
+    ? panelWidth - leftWidth - SPLIT_SIZE
+    : panelWidth - leftWidth - rightWidth - SPLIT_SIZE * 2
+  const narrowCenter = centerWidth < graphWidth + TABLE_CHROME_WIDTH
 
   const normalizedQuery = query.trim().toLowerCase()
   const matches = React.useMemo(() => {
@@ -1631,8 +1660,8 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         onChange: setLeftWidth,
         onCommit: (next: number) => layout.writeWidth('left', next),
         onReset: () => {
-          setLeftWidth(220)
-          layout.writeWidth('left', 220)
+          setLeftWidth(DEFAULT_LEFT)
+          layout.writeWidth('left', DEFAULT_LEFT)
         },
       })
 
@@ -1648,8 +1677,8 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         onChange: setRightWidth,
         onCommit: (next: number) => layout.writeWidth('right', next),
         onReset: () => {
-          setRightWidth(360)
-          layout.writeWidth('right', 360)
+          setRightWidth(DEFAULT_RIGHT)
+          layout.writeWidth('right', DEFAULT_RIGHT)
         },
       })
 
@@ -1671,8 +1700,8 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
             onChange: setLeftWidth,
             onCommit: (next: number) => layout.writeWidth('left', next),
             onReset: () => {
-              setLeftWidth(220)
-              layout.writeWidth('left', 220)
+              setLeftWidth(DEFAULT_LEFT)
+              layout.writeWidth('left', DEFAULT_LEFT)
             },
           }),
           centerPane,

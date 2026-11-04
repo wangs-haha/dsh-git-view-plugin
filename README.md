@@ -74,7 +74,9 @@
 | `src/client/api.ts` | `GitApi`：鉴权路由的读取/写入/远程任务轮询。 |
 | `src/client/remote.ts` | `RemoteRunner`：启动、轮询、取消一次远程任务。 |
 | `src/client/layout.ts` | `LayoutStore`：分栏宽度与上次仓库的持久化。 |
+| `src/client/metrics.ts` | 面板几何单一来源：行高、栏头、控件高度、紧凑断点、提交表列宽。 |
 | `src/client/notices.ts` | `NoticeCenter`：6 秒自动消失的操作提示。 |
+| `src/client/selfcheck.ts` | 构建新鲜度自检：页面跑的是旧构建时自动重载一次。 |
 | `src/client/panes/` | 工具栏、文件树、更改区、提交图、详情、对比弹窗与泳道布局。 |
 | `src/client/ui/` | 可复用的下拉、行内菜单、弹窗、回滚对话框、分隔条、Spinner。 |
 | `src/client/format.ts` / `i18n.ts` / `icons.tsx` / `styles.ts` / `types.ts` | 纯函数、中英字典、图标、样式与共享类型。 |
@@ -87,12 +89,18 @@
 pnpm install        # 只需一次
 pnpm typecheck      # tsc --noEmit
 pnpm build          # esbuild → index.js + client.js（包根目录）
+pnpm reload         # 让运行中的 DSH 热加载插件（不需要刷新页面）
 pnpm smoke          # Host 路由 / 客户端注册 / 面板渲染冒烟测试
-pnpm verify         # 以上三步串起来
+pnpm audit          # 真实 Chrome 计算样式审计（对比度/溢出/几何/令牌）
+pnpm preview        # 亮暗两套整页截图 → build/preview/*.png
+pnpm verify         # 前三步串起来
 ```
 
 - 插件以 junction 方式安装在 profile 里，`pnpm build` 之后刷新页面即可；改动 Host 时若未热重载，重启 DSH。
-- 冒烟测试用临时仓库和 mock 上下文直接调路由，不需要真实 DSH 会话：`scripts/smoke-host.mjs`、`scripts/smoke-client.mjs`、`scripts/smoke-panes.mjs`。
+- 桌面端没有刷新入口时用 `pnpm build && pnpm reload`：DSH 的 `client-hmr` 每 500ms 轮询每个客户端 bundle，文件 stat 一变就在 `/plugins/events` 广播 `rebuilt` 帧，页面随即卸载并重建该插件（无需刷新整个页面）。`--wait` 会打印服务端发布的 rev，可用来确认推送是否到达。
+- 插件还会**自愈**：面板启动 4 秒后、之后每 60 秒、以及窗口重新可见时，会从 `/plugins/events` 取自己的 bundle 地址，比对编译期写进代码的构建标记（`pnpm build` 会打印 `client build <marker>`）。发现页面跑的是旧构建就自动 `location.reload()` 一次：`sessionStorage` 按标记去重（每个构建最多重载一次，不会循环），页面不可见时不重载，网络或解析失败一律放行。所以即使 HMR 通道已经断开、再也不会收到 `rebuilt` 帧，页面也不会长期停在旧版本——**代价是从没有该逻辑的旧版本升级上来，仍需手动重载一次**。
+- 冒烟测试用临时仓库和 mock 上下文直接调路由，不需要真实 DSH 会话：`scripts/smoke-host.mjs`、`scripts/smoke-client.mjs`、`scripts/smoke-panes.mjs`；`scripts/smoke-selfcheck.mjs` 用假 fetch 断言自愈检查只重载一次且失败放行。
+- 色彩与布局的令牌层、尺寸规范、以及 `pnpm audit` 的判定口径见 [docs/ui-design-system.md](docs/ui-design-system.md)。
 
 ## 安全与限制
 
