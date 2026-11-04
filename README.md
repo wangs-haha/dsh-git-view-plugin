@@ -8,7 +8,7 @@
 | --- | --- |
 | [![亮色主题](docs/images/panel-light.png)](docs/images/panel-light.png) | [![暗色主题](docs/images/panel-dark.png)](docs/images/panel-dark.png) |
 
-> 截图由 `pnpm run shots` 使用真实组件、真实样式表和宿主主题令牌生成，夹具是演示仓库数据，不含真实工作区内容。
+> 上图为真实界面截图（同一面板的亮色 / 暗色主题），示例仓库即本插件自身。`pnpm run shots` 仍可用真实组件与宿主主题令牌生成夹具版截图（1560×780，不含真实工作区内容），不方便截屏时可临时替换。
 
 ## 功能
 

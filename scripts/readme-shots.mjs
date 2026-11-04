@@ -1,10 +1,12 @@
 /**
  * Render the README screenshots from the real component fixtures.
  *
- * `node scripts/readme-shots.mjs` writes `docs/images/panel-light.png` and
- * `docs/images/panel-dark.png` (1560×780, device scale 1). The fixtures use
- * demo data and the host's theme tokens, so the images match the shipped panel
- * without exposing a real workspace.
+ * The committed `docs/images/panel-{light,dark}.png` are real screenshots of the
+ * panel running inside DSH; this script is the fallback for when a live capture
+ * is unavailable. `node scripts/readme-shots.mjs` writes both files
+ * (1560x780, device scale 1) from the fixtures, so the images still match the
+ * shipped panel and never expose a real workspace — but running it overwrites
+ * the committed captures.
  */
 import { execFileSync } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
