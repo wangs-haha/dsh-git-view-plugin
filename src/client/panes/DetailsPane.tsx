@@ -200,7 +200,12 @@ export function DetailsPane(props: DetailsPaneProps): React.ReactElement {
     h(
       'div',
       { className: 'gv-details-head' },
-      h('span', null, t('detailTitle')),
+      h(
+        'span',
+        { className: 'gv-details-heading' },
+        h('span', { className: 'gv-head-icon', 'aria-hidden': true }, h(IconGraphMark, { size: 12 })),
+        h('span', null, t('detailTitle')),
+      ),
       scope ? h('span', { className: 'gv-head-scope', title: scope }, t('filteredBy')) : null,
     ),
     h('div', { className: 'gv-details-body' }, body),

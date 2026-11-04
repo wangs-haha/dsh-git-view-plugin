@@ -6,7 +6,7 @@
 import * as React from 'react'
 import { shortDate, fullDate, operationLabel } from '../format.js'
 import { COLUMNS } from '../metrics.js'
-import { IconClose, IconFolder, IconGraphMark, IconMore } from '../icons.js'
+import { IconBranch, IconClose, IconFolder, IconGraphMark, IconMore } from '../icons.js'
 import { ErrorState } from '../ui/ErrorState.js'
 import { Spinner } from '../ui/Spinner.js'
 import type { CommitRow, LogPayload, RepoState, Translate } from '../types.js'
@@ -329,7 +329,8 @@ export function CommitPane(props: CommitPaneProps): React.ReactElement {
               className: 'gv-status-item',
               title: `${t('currentBranch')}: ${branch}${state && state.upstream ? ` · ${state.upstream}` : ''}`,
             },
-            `· ${branch}`,
+            h(IconBranch, { size: 11 }),
+            h('span', null, branch),
           )
         : null,
       state && state.ahead > 0

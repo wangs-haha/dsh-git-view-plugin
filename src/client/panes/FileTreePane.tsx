@@ -6,7 +6,7 @@
  * down; it never fetches folders itself.
  */
 import * as React from 'react'
-import { FileIcon, IconChevron, IconHome } from '../icons.js'
+import { FileIcon, IconChevron, IconFolder, IconHome } from '../icons.js'
 import { Spinner } from '../ui/Spinner.js'
 import type { GitRepo, Translate, TreeEntry } from '../types.js'
 
@@ -89,7 +89,12 @@ export function FileTreePane(props: FileTreePaneProps): React.ReactElement {
     h(
       'div',
       { className: 'gv-tree-head' },
-      h('span', null, t('filesTab')),
+      h(
+        'span',
+        { className: 'gv-tree-heading' },
+        h('span', { className: 'gv-head-icon', 'aria-hidden': true }, h(IconFolder, { size: 12 })),
+        h('span', null, t('filesTab')),
+      ),
       refName
         ? h('span', { className: 'gv-tree-rootname gv-tree-refmode', title: refName }, `${t('historyTreeHint')} · ${refName}`)
         : h('span', { className: 'gv-tree-rootname', title: repo ? repo.root : '' }, projectName),

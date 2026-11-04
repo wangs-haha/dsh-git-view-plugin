@@ -112,6 +112,12 @@ export function ResizeHandle({
         if (onCommit) onCommit(next)
       },
     },
-    h('span', { className: 'gv-split-grip', 'aria-hidden': true }),
+    h(
+      'span',
+      { className: 'gv-split-grip', 'aria-hidden': true },
+      h('i', { key: 'a' }),
+      h('i', { key: 'b' }),
+      h('i', { key: 'c' }),
+    ),
   )
 }

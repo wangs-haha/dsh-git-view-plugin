@@ -322,7 +322,8 @@ export function ChangesPane(props: ChangesPaneProps): React.ReactElement {
       h(
         'span',
         { className: 'gv-changes-title' },
-        h('span', null, t('changes')),
+        h('span', { className: 'gv-head-icon', 'aria-hidden': true }, h(IconList, { size: 12 })),
+        h('span', { className: 'gv-changes-label' }, t('changes')),
         h('span', { className: 'gv-changes-count' }, String(entries.length)),
         entries.length !== totalCount ? h('span', { className: 'gv-changes-total' }, `/ ${totalCount}`) : null,
         loading && entries.length > 0 ? h('span', { className: 'gv-inline-spin', 'aria-hidden': true }) : null,

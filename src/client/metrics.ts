@@ -20,7 +20,7 @@ export const TABLE_HEAD_HEIGHT = 26
 /** Header of a column pane (file tree, commit details, modal). */
 export const PANE_HEAD_HEIGHT = 34
 /** Secondary header inside a pane (changes title bar, scope bar). */
-export const SUB_HEAD_HEIGHT = 28
+export const SUB_HEAD_HEIGHT = 30
 /** Bottom status line of the commit pane. */
 export const STATUS_BAR_HEIGHT = 24
 /** Toolbar minimum height; it may wrap to a second line on narrow panels. */

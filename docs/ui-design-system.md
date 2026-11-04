@@ -73,6 +73,31 @@
 
 `fileVisual()` 和 `PALETTE` 返回 `var(--gv-hue-*)`，主题里只定义一次。实测在面板底色上的对比度：亮色 4.17–6.28:1、暗色 5.72–10.59:1，全部高于非文本 UI 要求的 3:1。
 
+### 2.5 图标、圆角与交互
+
+图标不再各写各的颜色和容器：
+
+| 令牌/类 | 值 | 用途 |
+| --- | --- | --- |
+| `--gv-icon` | 文字色 86% + 次级文字色 | 可操作图标（按钮、行尾「⋯」）；亮色 `#1a1d21`（16.9:1），暗色 `#f3f5f6`（14.4:1） |
+| `--gv-icon-soft` | `--gv-text-muted` | 次级图标（下拉箭头、树形 chevron、分栏握把圆点）；亮色 5.8:1 |
+| `.gv-head-icon` | 20×20、`--gv-r-xs`、渐变底 + 1px 描边 | 每个分栏标题左侧的图标泡（文件/更改/详情） |
+| `.gv-icon-button` | 22/26px、`--gv-r-sm`、渐变底 + 阴影 | 所有图标按钮；hover 抬升 1px、accent 描边与光晕，active 缩到 0.96 |
+| `.gv-split-grip` | 11×32 胶囊 + 3 个 3px 圆点 | 分栏握把；亮暗都可见（圆点 5.8:1），hover/drag 变 accent 并放大 1.06 |
+
+圆角统一为 `--gv-r-xs/sm/md/lg = 6/8/10/14px`；控件、行、菜单、弹窗都从这一组取值，不再出现 3–12px 的十级混用。
+
+交互底色用渐变而不是纯色，并且**每个渐变都配一条 `background-color` 兜底**（`pnpm run audit` 只读 `background-color` 做合成对比度，渐变本身也不能成为唯一信息来源）：
+
+```css
+--gv-grad-control: linear-gradient(180deg, 文字色 2% + surface-1, surface-2);
+--gv-grad-hover:   linear-gradient(180deg, accent 7% + surface-1, accent 3% + surface-2);
+--gv-grad-selected:linear-gradient(90deg, accent 15% + 透明, accent 8% + 透明);
+--gv-grad-solid:   linear-gradient(180deg, solid 90% + #fff, solid);
+```
+
+动效统一为 `--gv-dur-fast/.1s`、`--gv-dur/.16s`，只动 `background`、`border`、`box-shadow`、`transform`、`opacity`；`prefers-reduced-motion` 下关闭位移动画。
+
 ## 3. 布局令牌
 
 ### 3.1 尺寸单一来源：`src/client/metrics.ts`
@@ -84,7 +109,7 @@
 | `ROW_HEIGHT` | 30 | 提交表行 + 泳道单元（CSS 用插值引用） |
 | `TREE_ROW_HEIGHT` | 26 | 文件树行 |
 | `CHANGE_ROW_HEIGHT` | 38 | 更改行（文件名 + 目录两行） |
-| `TABLE_HEAD_HEIGHT` / `PANE_HEAD_HEIGHT` / `SUB_HEAD_HEIGHT` / `STATUS_BAR_HEIGHT` | 26 / 34 / 28 / 24 | 表头、栏头、次级栏头、状态栏 |
+| `TABLE_HEAD_HEIGHT` / `PANE_HEAD_HEIGHT` / `SUB_HEAD_HEIGHT` / `STATUS_BAR_HEIGHT` | 26 / 34 / 30 / 24 | 表头、栏头、次级栏头、状态栏 |
 | `CONTROL_SMALL` / `CONTROL_HEIGHT` / `CONTROL_LARGE` | 22 / 26 / 28 | 图标按钮、按钮与输入框、工具栏控件 |
 | `COMPACT_WIDTH` | 960 | 紧凑布局断点（原 980，与最小栏宽不匹配） |
 | `MIN_CENTER` / `MIN_TREE` / `MIN_CHANGES` | 300 / 140 / 300 | 拖拽下限 |
