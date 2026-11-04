@@ -27,7 +27,7 @@
 - **提交区**：
   - 一行操作：左侧 **「生成信息」**（有内容时变「重新生成」），右侧 **「提交」**，中间是已选文件计数；生成只把 `type(scope): 描述` 写进输入框，**不会替你提交**。
   - 每个文件都有选择框，**默认全选**；取消勾选即在提交时排除该文件，这就是部分提交。
-  - **「回滚…」**：多选文件批量还原（未跟踪删除、暂存新增移除、已修改/已删除/冲突恢复到 `HEAD`），并可选择「删除新增文件的本地副本」；单行撤回按钮保留。
+  - **「回滚更改」**：多选文件批量还原（未跟踪删除、暂存新增移除、已修改/已删除/冲突恢复到 `HEAD`），并可选择「删除新增文件的本地副本」；单行撤回按钮保留。
   - `Ctrl+Enter` / `⌘+Enter` 提交，`Enter` 在提交信息中换行。
   - 文件状态以颜色、字母和简短标签呈现：**未跟踪**、**已修改**、**已暂存**、**冲突**、**已删除**、**重命名**；顶部还有可滚动的分类计数汇总。
 - **中间提交图**：彩色泳道、合并/分叉、refs、作者、日期、短哈希，搜索命中高亮。
@@ -48,7 +48,7 @@
 4. 用分支下拉右侧的三个按钮**抓取 / 拉取 / 推送**；拉取和推送会先确认策略，期间工具栏下方显示实时进度，可取消。
 4. 在左树选择目录或文件缩小历史范围（左树显示的是工作区，包含未跟踪文件）。
 5. 在提交区勾选要提交的文件（默认全选），点 **「生成信息」** 让 AI 起草，改好后点「提交」；也可以完全手写信息后提交。
-6. 想放弃改动时点行右侧撤回按钮，或点 **「回滚…」** 批量选择文件。
+6. 想放弃改动时点行右侧撤回按钮，或点 **「回滚更改」** 批量选择文件。
 7. 选中一个提交后，直接在该行右键（或行尾「⋯」）做检出/拣选/还原/撤销；右侧详情底部也有同一套按钮。
 
 工作区目录可以位于仓库子目录中：Host 会通过 `git rev-parse --show-toplevel` 找到仓库根目录。
@@ -57,14 +57,42 @@
 
 ## 结构
 
-| 文件 | 作用 |
+源码是 React + TypeScript，构建产物在 `dist/`（DSH 实际加载的就是它）：
+
+| 路径 | 作用 |
 | --- | --- |
-| `index.js` | Host 半：注册 `/api/git-view` 读取路由和 `/api/git-view/write` 写入路由；提交信息草稿生成（`message`）、回滚（`rollback`）、提交级操作（`history`）。 |
-| `git-data.js` | Git 读取封装：refs、**工作区文件树**、目录树、log、status、commit、diff；`execFile` 参数数组，不经 shell。 |
-| `git-ops.js` | Git 写入封装：检出/新建/重命名/删除分支，merge、rebase、继续/中止、按状态回滚/撤回、undo/reset/revert/cherry-pick/checkout；分支名与 ref 白名单校验。 |
-| `git-remote.js` | 远程操作的参数构造与校验：fetch/pull/push（含 rebase、force-with-lease、自动建立上游），以及凭据错误的人话提示。 |
-| `client.js` | Client 半：自绘下拉框与菜单、泳道算法、文件树、可拖动分区、更改列表、提交器、分支操作对话框、详情与对比弹窗。 |
+| `src/host/index.ts` | 插件入口：构造服务、注册 `/api/git-view` 与 `/api/git-view/write`。 |
+| `src/host/routes.ts` | `GitViewRoutes`：动作分发、参数校验、错误信封与状态码。 |
+| `src/host/data.ts` | `GitData`：refs、工作区文件树、log、status、commit、diff、`commitChanges`。 |
+| `src/host/ops.ts` | `GitOps`：分支生命周期、merge/rebase/继续/中止、回滚/撤回、undo/reset/revert/cherry-pick/checkout。 |
+| `src/host/remote.ts` | `RemoteService`：fetch/pull/push 任务、进度行、取消、10 分钟看门狗。 |
+| `src/host/remote-command.ts` | 远程命令参数构造与校验、凭据错误提示。 |
+| `src/host/exec.ts` | `GitRunner`：`spawn`/`execFile` 包装、硬化环境、超时、结果与错误。 |
+| `src/host/repo.ts` | `RepoResolver`：工作区 id → 仓库根，15s TTL 缓存。 |
+| `src/client/index.tsx` | 客户端入口：注册字典、主面板与侧边栏图标。 |
+| `src/client/app.tsx` | `GitViewPanel`：状态、副作用、动作与面板组合。 |
+| `src/client/api.ts` | `GitApi`：鉴权路由的读取/写入/远程任务轮询。 |
+| `src/client/remote.ts` | `RemoteRunner`：启动、轮询、取消一次远程任务。 |
+| `src/client/layout.ts` | `LayoutStore`：分栏宽度与上次仓库的持久化。 |
+| `src/client/notices.ts` | `NoticeCenter`：6 秒自动消失的操作提示。 |
+| `src/client/panes/` | 工具栏、文件树、更改区、提交图、详情、对比弹窗与泳道布局。 |
+| `src/client/ui/` | 可复用的下拉、行内菜单、弹窗、回滚对话框、分隔条、Spinner。 |
+| `src/client/format.ts` / `i18n.ts` / `icons.tsx` / `styles.ts` / `types.ts` | 纯函数、中英字典、图标、样式与共享类型。 |
+| `index.js` / `client.js` | 构建产物（勿手改）：Host ESM bundle 与浏览器 bundle（外层保留模块加载器工厂）。 |
 | `cordis.patch.yml` | 插入 `git-view` 行。 |
+
+## 开发
+
+```powershell
+pnpm install        # 只需一次
+pnpm typecheck      # tsc --noEmit
+pnpm build          # esbuild → index.js + client.js（包根目录）
+pnpm smoke          # Host 路由 / 客户端注册 / 面板渲染冒烟测试
+pnpm verify         # 以上三步串起来
+```
+
+- 插件以 junction 方式安装在 profile 里，`pnpm build` 之后刷新页面即可；改动 Host 时若未热重载，重启 DSH。
+- 冒烟测试用临时仓库和 mock 上下文直接调路由，不需要真实 DSH 会话：`scripts/smoke-host.mjs`、`scripts/smoke-client.mjs`、`scripts/smoke-panes.mjs`。
 
 ## 安全与限制
 
@@ -78,3 +106,5 @@
 - 远程操作在后台任务中执行，与本地写操作共享「同一仓库同一时间只允许一个写操作」的互斥；单次任务最多 10 分钟，可随时取消。
 - 面板不会弹出交互式凭据输入（`GIT_TERMINAL_PROMPT=0`），依赖本机 SSH key 或 credential helper；认证失败会提示先在终端完成一次认证。
 - 只支持可访问本地 `git` 可执行文件的环境。
+
+

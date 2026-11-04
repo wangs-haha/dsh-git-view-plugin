@@ -256,7 +256,6 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
   const runnerRef = React.useRef<RemoteRunner | null>(null)
   const [commitBusy, setCommitBusy] = React.useState(false)
   const [commitAiBusy, setCommitAiBusy] = React.useState(false)
-  const [commitNotice, setCommitNotice] = React.useState('')
   const [commitError, setCommitError] = React.useState('')
 
   const [actionDialog, setActionDialog] = React.useState<DialogConfig | null>(null)
@@ -302,8 +301,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
       setChangesLoading(false)
       setDeselectedChanges(new Set())
       setCommitMessage('')
-      setCommitNotice('')
-      setCommitError('')
+        setCommitError('')
       setCommitBusy(false)
       setActionDialog(null)
       setActionError('')
@@ -781,7 +779,6 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
     }
     setCommitBusy(true)
     setCommitError('')
-    setCommitNotice('')
     try {
       const payload = await api.write<CommitPayload>({
         repo: repoId,
@@ -789,7 +786,6 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         paths: selectedChangePaths,
         message: commitMessage,
       })
-      setCommitNotice(`${translate('commitDone')} ${payload.shortHash ?? ''}`)
       setCommitMessage('')
       setDeselectedChanges(new Set())
       setSelected('')
@@ -817,7 +813,6 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
     }
     setCommitAiBusy(true)
     setCommitError('')
-    setCommitNotice('')
     try {
       const payload = await api.write<MessagePayload>({
         repo: repoId,
@@ -1540,7 +1535,6 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         busy: commitBusy,
         disabled: commitBusy || actionBusy,
         aiBusy: commitAiBusy,
-        notice: commitNotice,
         repoNotice,
         repoState: branchState,
         commitError,

@@ -26,7 +26,6 @@ export interface ChangesPaneProps {
   busy: boolean
   disabled: boolean
   aiBusy: boolean
-  notice: string
   repoNotice: { text: string; kind: string } | null
   repoState: RepoState | null
   commitError: string
@@ -65,7 +64,6 @@ export function ChangesPane(props: ChangesPaneProps): React.ReactElement {
     disabled,
     aiBusy,
     onGenerate,
-    notice,
     repoNotice,
     repoState,
     commitError,
@@ -379,15 +377,8 @@ export function ChangesPane(props: ChangesPaneProps): React.ReactElement {
           h('span', null, t('commit')),
         ),
       ),
-      busy || aiBusy
-        ? h(
-            'div',
-            { className: 'gv-commit-note' },
-            busy ? t(aiBusy ? 'aiWorking' : 'committing') : t('aiWorking'),
-          )
-        : null,
-      notice ? h('div', { className: 'gv-commit-note gv-commit-ok' }, notice) : null,
       commitError ? h('div', { className: 'gv-commit-note gv-commit-error' }, commitError) : null,
     ),
   )
 }
+

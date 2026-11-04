@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-git-view",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "description": "IntelliJ-style Git panel: workspace file tree, commit graph, per-branch actions, fetch/pull/push with live progress, rollback, AI-drafted commit messages, and history operations.",
@@ -9,6 +9,7 @@
     "type": "git",
     "url": "git+https://github.com/wangs-haha/dsh-git-view-plugin.git"
   },
+  "main": "./index.js",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -17,15 +18,18 @@
   },
   "files": [
     "index.js",
-    "git-data.js",
-    "git-ops.js",
-    "git-remote.js",
     "client.js",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
     "README.md"
   ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "node scripts/build.mjs",
+    "smoke": "node scripts/smoke-host.mjs && node scripts/smoke-client.mjs && node scripts/smoke-panes.mjs",
+    "verify": "pnpm typecheck && pnpm build && pnpm smoke"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
@@ -34,5 +38,14 @@
       "platform": "web",
       "immediately": true
     }
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
   }
 }
+
+

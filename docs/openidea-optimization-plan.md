@@ -4,6 +4,8 @@
 > 对标对象：本仓库 `dsh-git-view-plugin` v0.2.0（DSH Web 的 IntelliJ 风格 Git 面板）
 > 调研方式：本地 sparse clone（`D:\data\temp\openidea-src`，3862 个文件），只读 `src/features/vcs`（前端 106 个文件）、`crates/ide-vcs/src`（Rust VCS 引擎）、`crates/ide-host/src/ops/vcs*`（IPC 层）。本文引用的路径均可在该 clone 中核对。
 
+> **版本说明（0.5.0）**：源码已迁移到 `src/`——Host 是 TypeScript 服务类，Client 是 React + TS 组件，构建产物为根目录 `index.js` / `client.js`。本文写于 0.4.0 及之前，文中出现的 `index.js`、`git-data.js`、`git-ops.js`、`client.js` 现在分别对应 `src/host/routes.ts`、`src/host/data.ts`、`src/host/ops.ts`、`src/client/app.tsx` 与 `src/client/panes/`。
+
 ---
 
 ## 0. 本次实际做了什么
