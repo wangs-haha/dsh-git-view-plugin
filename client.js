@@ -145,7 +145,6 @@ window.__ModuleLoader__.load({
       generateMessage: '生成信息',
       regenerateMessage: '重新生成',
       generateHint: '让当前默认模型根据已勾选文件写一条 type(scope): 描述，写入输入框，提交前可修改',
-      messageGenerated: '已生成提交信息，确认后点「提交」',
       showHistory: '查看此分支历史',
       rollback: '回滚…',
       rollbackTitle: '回滚更改',
@@ -164,6 +163,19 @@ window.__ModuleLoader__.load({
       historyDone: '操作完成',
       commitActions: '提交操作',
       copyCommitMessage: '复制提交信息',
+      fetch: '抓取',
+      pull: '拉取',
+      push: '推送',
+      pullHint: '从当前分支的上游拉取并更新本地分支。',
+      pushHint: '把当前分支推送到它的上游；没有上游时推到 origin 并建立跟踪。',
+      pullRebase: '用 rebase 而不是 merge',
+      forceWithLease: 'force-with-lease（远端有别人的提交时会失败）',
+      fetchDone: '已抓取远端更新',
+      pullDone: '已拉取',
+      pushDone: '已推送',
+      remoteFailed: '网络操作失败',
+      remoteCancelled: '已取消网络操作',
+      remoteRunning: '正在与远端通信…',
       branchActions: '分支操作',
       checkoutBranch: '检出分支',
       checkoutRemote: '检出为本地分支…',
@@ -314,7 +326,6 @@ window.__ModuleLoader__.load({
       generateMessage: 'Generate message',
       regenerateMessage: 'Regenerate',
       generateHint: 'Ask the default model for a type(scope): subject from the checked files and put it in the message box',
-      messageGenerated: 'Message drafted — review it, then commit',
       showHistory: 'Show this history',
       rollback: 'Rollback…',
       rollbackTitle: 'Rollback changes',
@@ -333,6 +344,19 @@ window.__ModuleLoader__.load({
       historyDone: 'Done',
       commitActions: 'Commit actions',
       copyCommitMessage: 'Copy commit message',
+      fetch: 'Fetch',
+      pull: 'Pull',
+      push: 'Push',
+      pullHint: 'Fetch and integrate the upstream of the current branch.',
+      pushHint: 'Push the current branch to its upstream; origin is used when none is set.',
+      pullRebase: 'Rebase instead of merge',
+      forceWithLease: 'force-with-lease (fails if the remote moved)',
+      fetchDone: 'Fetched remote updates',
+      pullDone: 'Pulled',
+      pushDone: 'Pushed',
+      remoteFailed: 'Remote operation failed',
+      remoteCancelled: 'Remote operation cancelled',
+      remoteRunning: 'Talking to the remote…',
       branchActions: 'Branch actions',
       checkoutBranch: 'Checkout',
       checkoutRemote: 'Checkout as local branch…',
@@ -653,6 +677,28 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Dictionary key for a remote operation's progress label.
+     * @param {string} op - fetch, pull, or push.
+     * @returns {string} dictionary key.
+     */
+    function remoteOpKey(op) {
+      if (op === 'fetch') return 'fetch'
+      if (op === 'pull') return 'pull'
+      return 'push'
+    }
+
+    /**
+     * Dictionary key for a remote operation's success notice.
+     * @param {string} op - fetch, pull, or push.
+     * @returns {string} dictionary key.
+     */
+    function remoteDoneKey(op) {
+      if (op === 'fetch') return 'fetchDone'
+      if (op === 'pull') return 'pullDone'
+      return 'pushDone'
+    }
+
+    /**
      * Default local branch name offered when checking out a remote branch.
      * @param {string} remoteName - e.g. `origin/feature/login`.
      * @returns {string} e.g. `feature/login`.
@@ -808,7 +854,7 @@ window.__ModuleLoader__.load({
      */
     function readWidth(key, fallback, min, max) {
       try {
-        const raw = window.localStorage ? window.localStorage.getItem(`dsh.git-view.${key}`) : null
+        const raw = window.localStorage ? window.localStorage.getItem(`dsh.git-view.v2.${key}`) : null
         if (raw === null || raw === '') return fallback
         const value = Number(raw)
         if (Number.isFinite(value)) return Math.min(max, Math.max(min, Math.round(value)))
@@ -826,7 +872,7 @@ window.__ModuleLoader__.load({
      */
     function writeWidth(key, value) {
       try {
-        if (window.localStorage) window.localStorage.setItem(`dsh.git-view.${key}`, String(Math.round(value)))
+        if (window.localStorage) window.localStorage.setItem(`dsh.git-view.v2.${key}`, String(Math.round(value)))
       } catch {
         /* private mode */
       }
@@ -1172,6 +1218,34 @@ window.__ModuleLoader__.load({
         { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': true },
         h('path', {
           d: 'M20 12a8 8 0 1 1-2.34-5.66M20 4v5h-5',
+          stroke: 'currentColor',
+          strokeWidth: 1.8,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+        }),
+      )
+    }
+
+    function IconArrowUp({ size = 14 }) {
+      return h(
+        'svg',
+        { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': true },
+        h('path', {
+          d: 'M12 20V5m0 0-6 6m6-6 6 6',
+          stroke: 'currentColor',
+          strokeWidth: 1.8,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+        }),
+      )
+    }
+
+    function IconArrowDown({ size = 14 }) {
+      return h(
+        'svg',
+        { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', 'aria-hidden': true },
+        h('path', {
+          d: 'M12 4v15m0 0 6-6m-6 6-6-6',
           stroke: 'currentColor',
           strokeWidth: 1.8,
           strokeLinecap: 'round',
@@ -2040,6 +2114,11 @@ window.__ModuleLoader__.load({
         count,
         matchCount,
         onRefresh,
+        sync,
+        syncBusy,
+        onFetch,
+        onPull,
+        onPush,
       } = props
 
       const repoOptions = (repos || []).map((repo) => ({
@@ -2048,6 +2127,9 @@ window.__ModuleLoader__.load({
         description: repo.path,
         icon: 'repo',
       }))
+      const ahead = sync && sync.ahead ? sync.ahead : 0
+      const behind = sync && sync.behind ? sync.behind : 0
+      const remoteDisabled = !log || syncBusy
 
       return h(
         'div',
@@ -2076,6 +2158,48 @@ window.__ModuleLoader__.load({
           width: '210px',
           placeholder: t('branch'),
         }),
+        h(
+          'div',
+          { className: 'gv-sync' },
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'gv-icon-button',
+              title: t('fetch'),
+              'aria-label': t('fetch'),
+              disabled: remoteDisabled,
+              onClick: onFetch,
+            },
+            h(IconRefresh, { size: 14 }),
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'gv-icon-button',
+              title: behind > 0 ? `${t('pull')} · ↓${behind}` : t('pull'),
+              'aria-label': t('pull'),
+              disabled: remoteDisabled,
+              onClick: onPull,
+            },
+            h(IconArrowDown, { size: 14 }),
+            behind > 0 ? h('span', { className: 'gv-sync-count gv-sync-behind' }, String(behind)) : null,
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'gv-icon-button',
+              title: ahead > 0 ? `${t('push')} · ↑${ahead}` : t('push'),
+              'aria-label': t('push'),
+              disabled: remoteDisabled,
+              onClick: onPush,
+            },
+            h(IconArrowUp, { size: 14 }),
+            ahead > 0 ? h('span', { className: 'gv-sync-count gv-sync-ahead' }, String(ahead)) : null,
+          ),
+        ),
         h(
           'div',
           { className: 'gv-search' },
@@ -3411,6 +3535,9 @@ window.__ModuleLoader__.load({
       const [rollbackBusy, setRollbackBusy] = useState(false)
       const [rollbackError, setRollbackError] = useState('')
       const [commitMenu, setCommitMenu] = useState(null)
+      const [remoteJob, setRemoteJob] = useState(null)
+      const remotePollRef = useRef('')
+      const remoteClearTimer = useRef(null)
       const [commitBusy, setCommitBusy] = useState(false)
       const [commitAiBusy, setCommitAiBusy] = useState(false)
       const [commitNotice, setCommitNotice] = useState('')
@@ -3422,7 +3549,7 @@ window.__ModuleLoader__.load({
       const [repoNotice, setRepoNotice] = useState(null)
       const noticeTimer = useRef(null)
 
-      const [leftWidth, setLeftWidth] = useState(() => readWidth('left', 220, MIN_LEFT, MAX_LEFT))
+      const [leftWidth, setLeftWidth] = useState(() => readWidth('left', 280, MIN_LEFT, MAX_LEFT))
       const [rightWidth, setRightWidth] = useState(() => readWidth('right', 360, MIN_RIGHT, MAX_RIGHT))
       const [changesHeight, setChangesHeight] = useState(() =>
         readWidth('changes', DEFAULT_CHANGES, MIN_CHANGES, 900),
@@ -3976,7 +4103,6 @@ window.__ModuleLoader__.load({
           })
           const draft = typeof payload.message === 'string' ? payload.message : ''
           setCommitMessage(draft)
-          setCommitNotice(t('messageGenerated'))
           window.requestAnimationFrame(() => {
             const node = messageRef.current
             if (!node) return
@@ -4004,6 +4130,104 @@ window.__ModuleLoader__.load({
         if (noticeTimer.current) window.clearTimeout(noticeTimer.current)
         noticeTimer.current = window.setTimeout(() => setRepoNotice(null), 6000)
       }, [])
+
+      /**
+       * Poll one remote job until it settles. The progress strip shows git's
+       * last output line and percentage while it runs.
+       * @param {string} id - job id.
+       * @param {string} op - fetch, pull, or push.
+       * @returns {Promise<void>}
+       */
+      const pollRemoteJob = useCallback(
+        async (id, op) => {
+          remotePollRef.current = id
+          for (;;) {
+            await new Promise((resolve) => setTimeout(resolve, 700))
+            if (remotePollRef.current !== id) return
+            let snapshot
+            try {
+              snapshot = await fetchJson('remoteJob', { repo: repoId, id })
+            } catch (error) {
+              if (remotePollRef.current !== id) return
+              remotePollRef.current = ''
+              setRemoteJob({ id, op, state: 'error', error: errorText(error), lines: [] })
+              return
+            }
+            if (remotePollRef.current !== id) return
+            setRemoteJob(snapshot)
+            if (snapshot.state === 'running' || snapshot.state === 'cancelling') continue
+            if (snapshot.state === 'done') {
+              showRepoNotice(t(remoteDoneKey(op)))
+              refresh()
+              setChangesTick((value) => value + 1)
+            } else if (snapshot.state === 'cancelled') {
+              showRepoNotice(t('remoteCancelled'))
+            } else {
+              showRepoNotice(snapshot.error || t('remoteFailed'), 'error')
+            }
+            if (remoteClearTimer.current) window.clearTimeout(remoteClearTimer.current)
+            remoteClearTimer.current = window.setTimeout(() => setRemoteJob(null), 6000)
+            return
+          }
+        },
+        [repoId, refresh, showRepoNotice, t],
+      )
+
+      /**
+       * Start a remote operation and show its progress.
+       * @param {string} op - fetch, pull, or push.
+       * @param {{ rebase?: boolean, forceWithLease?: boolean }} [options] - user choices.
+       * @returns {Promise<void>}
+       */
+      const runRemote = useCallback(
+        async (op, options = {}) => {
+          if (!repoId) return
+          setActionBusy(true)
+          setActionError('')
+          try {
+            const payload = await postJson({ repo: repoId, action: 'remote', op, ...options })
+            setActionDialog(null)
+            setRemoteJob({ id: payload.id, op, label: payload.label, state: 'running', lines: [], percent: null })
+            void pollRemoteJob(payload.id, op)
+          } catch (error) {
+            setActionError(errorText(error))
+          } finally {
+            setActionBusy(false)
+          }
+        },
+        [repoId, pollRemoteJob],
+      )
+
+      /**
+       * Fetch runs directly; pull and push confirm their strategy in a dialog.
+       * @param {string} op - fetch, pull, or push.
+       * @returns {void}
+       */
+      const requestRemote = useCallback(
+        (op) => {
+          if (!repoId) return
+          if (op === 'fetch') {
+            void runRemote('fetch')
+            return
+          }
+          setActionError('')
+          setActionDialog({
+            kind: 'remote',
+            op,
+            title: op === 'pull' ? t('pull') : t('push'),
+            description: op === 'pull' ? t('pullHint') : t('pushHint'),
+            checkboxLabel: op === 'pull' ? t('pullRebase') : t('forceWithLease'),
+            checkboxDefault: false,
+            confirmLabel: op === 'pull' ? t('pull') : t('push'),
+          })
+        },
+        [repoId, runRemote, t],
+      )
+
+      const cancelRemoteJob = useCallback(() => {
+        if (!repoId || !remoteJob || remoteJob.state !== 'running') return
+        void postJson({ repo: repoId, action: 'remoteCancel', id: remoteJob.id }).catch(() => {})
+      }, [repoId, remoteJob])
 
       const executeBranchOp = useCallback(
         async (op, payload) => {
@@ -4282,6 +4506,13 @@ window.__ModuleLoader__.load({
             void executeHistoryOp(dialog.op)
             return
           }
+          if (dialog.kind === 'remote') {
+            void runRemote(
+              dialog.op,
+              dialog.op === 'pull' ? { rebase: Boolean(checked) } : { forceWithLease: Boolean(checked) },
+            )
+            return
+          }
           const payload = { ...dialog.payload }
           if (dialog.input) {
             const name = String(value || '').trim()
@@ -4300,7 +4531,7 @@ window.__ModuleLoader__.load({
           if (dialog.op === 'delete') payload.force = Boolean(checked)
           void executeBranchOp(dialog.op, payload)
         },
-        [actionDialog, actionBusy, executeBranchOp, executeDiscard, executeHistoryOp, t],
+        [actionDialog, actionBusy, executeBranchOp, executeDiscard, executeHistoryOp, runRemote, t],
       )
 
       const closeActionDialog = useCallback(() => {
@@ -4731,7 +4962,36 @@ window.__ModuleLoader__.load({
           count: log ? commits.length : 0,
           matchCount: matches ? matches.size : null,
           onRefresh: refresh,
+          sync: branchState,
+          syncBusy: actionBusy || Boolean(remoteJob && remoteJob.state === 'running'),
+          onFetch: () => requestRemote('fetch'),
+          onPull: () => requestRemote('pull'),
+          onPush: () => requestRemote('push'),
         }),
+        remoteJob
+          ? h(
+              'div',
+              { className: `gv-remote gv-remote-${remoteJob.state}` },
+              remoteJob.state === 'running' || remoteJob.state === 'cancelling'
+                ? h('span', { className: 'gv-inline-spin', 'aria-hidden': true })
+                : null,
+              h(
+                'span',
+                { className: 'gv-remote-label' },
+                `${t(remoteOpKey(remoteJob.op))}${remoteJob.percent != null ? ` · ${remoteJob.percent}%` : ''}`,
+              ),
+              h(
+                'span',
+                { className: 'gv-remote-line', title: (remoteJob.lines || []).join('\n') || remoteJob.error || '' },
+                (remoteJob.lines && remoteJob.lines.length
+                  ? remoteJob.lines[remoteJob.lines.length - 1]
+                  : remoteJob.error || t('remoteRunning')),
+              ),
+              remoteJob.state === 'running'
+                ? h('button', { type: 'button', className: 'gv-remote-cancel', onClick: cancelRemoteJob }, t('cancel'))
+                : null,
+            )
+          : null,
         emptyRepos
           ? h(
               'div',
@@ -4818,6 +5078,17 @@ window.__ModuleLoader__.load({
 .gv-root *{box-sizing:border-box}
 .gv-toolbar{display:flex;align-items:center;gap:8px;row-gap:6px;padding:6px 12px;padding-left:max(12px,var(--dsh-frame-leading-clearance,12px));min-height:44px;border-bottom:1px solid var(--dsw-alias-border-l1);flex:none;flex-wrap:wrap}
 .gv-brand{display:flex;align-items:center;gap:6px;font-weight:600;font-size:12.5px;color:var(--dsw-alias-label-primary);white-space:nowrap}
+.gv-sync{display:flex;align-items:center;gap:2px;padding:1px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px}
+.gv-sync .gv-icon-button{position:relative;width:26px;height:26px;border-radius:6px}
+.gv-sync-count{position:absolute;top:-4px;right:-4px;min-width:13px;height:13px;line-height:13px;padding:0 3px;border-radius:7px;font-size:8.5px;font-weight:700;text-align:center;color:var(--dsw-alias-bg-base)}
+.gv-sync-ahead{background:var(--dsw-alias-state-success-primary)}
+.gv-sync-behind{background:var(--dsw-alias-brand-primary)}
+.gv-remote{display:flex;align-items:center;gap:8px;padding:4px 12px;border-bottom:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);font-size:11px;color:var(--dsw-alias-label-secondary)}
+.gv-remote-label{flex:none;font-weight:600;color:var(--dsw-alias-label-primary)}
+.gv-remote-line{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:ltr;text-align:left}
+.gv-remote-error .gv-remote-label{color:var(--dsw-alias-state-error-primary)}
+.gv-remote-cancel{flex:none;height:20px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:10.5px;cursor:pointer}
+.gv-remote-cancel:hover{background:var(--dsw-alias-bg-layer-2)}
 .gv-divider{width:1px;height:18px;background:var(--dsw-alias-border-l1);flex:none}
 .gv-dropdown{position:relative;flex:none;max-width:220px}
 .gv-dropdown-trigger{display:flex;align-items:center;gap:7px;width:100%;height:28px;padding:0 9px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:color-mix(in srgb,var(--dsw-alias-brand-primary) 7%,var(--dsw-alias-bg-layer-1));color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;cursor:pointer;outline:none;transition:background .12s,border-color .12s,box-shadow .12s}

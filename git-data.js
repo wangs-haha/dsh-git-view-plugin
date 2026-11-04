@@ -294,6 +294,19 @@ export async function readWorktreeTree(root, path = '') {
 }
 
 /**
+ * List the repository's remote names.
+ * @param {string} root - repository root.
+ * @returns {Promise<string[]>} remote names.
+ */
+export async function readRemotes(root) {
+  const out = await runGit(root, ['remote'])
+  return out
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+}
+
+/**
  * Build a commit list plus the ref catalogue a branch selector needs.
  * @param {string} root - repository root.
  * @param {string} ref - full ref to walk, or an empty string for every ref.

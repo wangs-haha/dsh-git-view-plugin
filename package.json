@@ -1,9 +1,9 @@
 {
   "name": "@local/dsh-git-view",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
-  "description": "IntelliJ-style Git panel: workspace file tree, commit graph, per-branch actions, side-by-side diffs, rollback, AI-drafted commit messages, and history operations.",
+  "description": "IntelliJ-style Git panel: workspace file tree, commit graph, per-branch actions, fetch/pull/push with live progress, rollback, AI-drafted commit messages, and history operations.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -19,6 +19,7 @@
     "index.js",
     "git-data.js",
     "git-ops.js",
+    "git-remote.js",
     "client.js",
     "cordis.patch.yml",
     "locale/*.json",

@@ -281,7 +281,7 @@ openidea 把「操作结果」建模成枚举而不是布尔值：
 
 | 编号 | 任务 | 备注 |
 | --- | --- | --- |
-| P2-1 | 远端 fetch/pull/push | 先「结果 + 尾部日志」，再加 SSE 进度；`--force-with-lease`；保护主分支 |
+| P2-1 | 远端 fetch/pull/push | **已提前实现（0.4.0）**：job + 轮询进度、`--prune`、`--autostash` 未启用（脏树直接报错）、`--force-with-lease` 仅在用户勾选时使用；SSE 推送留待后续 |
 | P2-2 | Shelf / Patch | 复用临时索引生成 `--binary` 补丁；应用失败走 3-way |
 | P2-3 | 三栏合并编辑器 | `:1/:2/:3` 三份文本，纯文本三栏即可，不必上 CodeMirror |
 | P2-4 | 提交前检查 | Windows 非法文件名、>10MB 文件、新增行 TODO、行尾空白（`commitChecks.tsx` 里挑 2 项） |

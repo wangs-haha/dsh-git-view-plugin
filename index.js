@@ -7,6 +7,7 @@
  * directories.
  */
 
+import { spawn } from 'node:child_process'
 import {
   GitError,
   LIMITS,
@@ -15,6 +16,7 @@ import {
   readCommit,
   readDiff,
   readLog,
+  readRemotes,
   readStatus,
   readTree,
   readWorktreeTree,
@@ -28,6 +30,7 @@ import {
   runBranchOperation,
   stageResolvedPaths,
 } from './git-ops.js'
+import { assertRemoteOp, buildRemoteCommand, remoteErrorText } from './git-remote.js'
 
 /** The authenticated route the Client half reads Git data from. */
 export const ROUTE_PATH = '/api/git-view'
@@ -114,6 +117,181 @@ export function apply(ctx) {
     }
     writesInFlight.add(root)
     return () => writesInFlight.delete(root)
+  }
+
+  /** Remote jobs (fetch/pull/push), kept for polling after they finish. */
+  const remoteJobs = new Map()
+  let remoteJobSeq = 0
+  /** Hard cap so a stuck credential helper cannot hold the write lock forever. */
+  const REMOTE_TIMEOUT_MS = 10 * 60 * 1000
+  /** Finished jobs are dropped after this long. */
+  const REMOTE_KEEP_MS = 10 * 60 * 1000
+
+  /**
+   * Detached view of one remote job (never exposes the child process).
+   * @param {object} job - internal job record.
+   * @returns {object} pollable snapshot.
+   */
+  function remoteSnapshot(job) {
+    return {
+      id: job.id,
+      op: job.op,
+      label: job.label,
+      state: job.state,
+      startedAt: job.startedAt,
+      endedAt: job.endedAt || null,
+      percent: job.percent,
+      exitCode: job.exitCode,
+      error: job.error || '',
+      lines: job.lines.slice(-40),
+    }
+  }
+
+  /**
+   * Drop finished jobs that nobody will poll anymore.
+   * @returns {void}
+   */
+  function pruneRemoteJobs() {
+    const now = Date.now()
+    for (const [id, job] of remoteJobs) {
+      if (job.endedAt && now - job.endedAt > REMOTE_KEEP_MS) remoteJobs.delete(id)
+    }
+  }
+
+  /**
+   * Start `git fetch|pull|push` as a job and stream its output into the job
+   * record. The per-repository write lock is held until the job settles.
+   * @param {object} repo - resolved repository.
+   * @param {object} body - parsed request body (`op`, `rebase`, `forceWithLease`, `tags`).
+   * @returns {Promise<object>} `{ ok, id, op, label }`.
+   */
+  async function startRemote(repo, body) {
+    const op = assertRemoteOp(body.op)
+    const [state, remotes] = await Promise.all([readRepoState(repo.root), readRemotes(repo.root)])
+    const { args, label } = buildRemoteCommand(
+      op,
+      {
+        branch: state.branch,
+        upstream: state.upstream,
+        detached: state.detached,
+        remotes,
+      },
+      {
+        rebase: body.rebase === true,
+        forceWithLease: body.forceWithLease === true,
+        tags: body.tags === true,
+      },
+    )
+
+    const release = beginWrite(repo.root)
+    pruneRemoteJobs()
+    const id = `remote-${++remoteJobSeq}-${Date.now().toString(36)}`
+    /** @type {object} */
+    const job = {
+      id,
+      op,
+      label,
+      repo: repo.root,
+      state: 'running',
+      startedAt: Date.now(),
+      endedAt: null,
+      percent: null,
+      exitCode: null,
+      error: '',
+      lines: [],
+      child: null,
+      release,
+      timer: null,
+    }
+    remoteJobs.set(id, job)
+
+    let child
+    try {
+      child = spawn('git', args, {
+        cwd: repo.root,
+        env: {
+          ...process.env,
+          GIT_TERMINAL_PROMPT: '0',
+          GIT_OPTIONAL_LOCKS: '0',
+          GIT_PAGER: 'cat',
+          LC_ALL: 'C',
+          LANG: 'C',
+        },
+        windowsHide: true,
+      })
+    } catch (error) {
+      release()
+      remoteJobs.delete(id)
+      throw new GitError(error instanceof Error ? error.message : String(error), 502)
+    }
+    job.child = child
+
+    const absorb = (chunk) => {
+      for (const raw of String(chunk).split(/[\r\n]+/)) {
+        const line = raw.trim()
+        if (!line) continue
+        job.lines.push(line)
+        if (job.lines.length > 200) job.lines.shift()
+        const match = /(\d{1,3})%/.exec(line)
+        if (match) job.percent = Math.max(job.percent || 0, Number(match[1]))
+      }
+    }
+    child.stdout?.on('data', absorb)
+    child.stderr?.on('data', absorb)
+
+    let settled = false
+    const settle = (spawnError) => {
+      if (settled) return
+      settled = true
+      if (job.timer) clearTimeout(job.timer)
+      job.endedAt = Date.now()
+      job.exitCode = typeof child.exitCode === 'number' ? child.exitCode : null
+      if (spawnError) {
+        job.state = 'error'
+        job.error = `无法启动 git：${spawnError.message}`
+      } else if (job.state === 'cancelling') {
+        job.state = 'cancelled'
+      } else if (job.exitCode === 0) {
+        job.state = 'done'
+        job.percent = 100
+      } else {
+        job.state = 'error'
+        job.error = remoteErrorText(job.lines.join('\n'))
+      }
+      job.child = null
+      release()
+    }
+    child.on('error', (error) => settle(error))
+    child.on('close', () => settle(null))
+    job.timer = setTimeout(() => {
+      try {
+        child.kill()
+      } catch {
+        /* already gone */
+      }
+      job.error = '网络操作超时（10 分钟）'
+      job.state = 'error'
+    }, REMOTE_TIMEOUT_MS)
+
+    return { ok: true, id, op, label }
+  }
+
+  /**
+   * Ask a running remote job to stop.
+   * @param {string} id - job id.
+   * @returns {{ ok: boolean, id: string, state: string }} acknowledgement.
+   */
+  function cancelRemote(id) {
+    const job = remoteJobs.get(String(id || ''))
+    if (!job) throw new GitError('unknown remote job', 404)
+    if (job.state !== 'running') return { ok: true, id: job.id, state: job.state }
+    job.state = 'cancelling'
+    try {
+      job.child?.kill()
+    } catch {
+      /* already gone */
+    }
+    return { ok: true, id: job.id, state: job.state }
   }
 
   /**
@@ -382,6 +560,13 @@ export function apply(ctx) {
         return jsonResponse({ repo, ref, path: scope, mode, entries })
       }
 
+      if (action === 'remoteJob') {
+        const id = (url.searchParams.get('id') || '').slice(0, 80)
+        const job = remoteJobs.get(id)
+        if (!job) throw new GitError('unknown remote job', 404)
+        return jsonResponse({ ...remoteSnapshot(job) })
+      }
+
       if (action === 'log') {
         const ref = (url.searchParams.get('ref') || '').slice(0, 500)
         const limit = boundedInt(url.searchParams.get('limit'), LIMITS.commits, LIMITS.commits)
@@ -612,6 +797,8 @@ export function apply(ctx) {
       if (action === 'discard') return await handleDiscardWrite(repo, body)
       if (action === 'rollback') return await handleRollbackWrite(repo, body)
       if (action === 'history') return await handleHistoryWrite(repo, body)
+      if (action === 'remote') return jsonResponse(await startRemote(repo, body))
+      if (action === 'remoteCancel') return jsonResponse(cancelRemote(body.id))
       if (action === 'resolve') return await handleResolveWrite(repo, body)
       throw new GitError('unknown action', 404)
     } catch (error) {
