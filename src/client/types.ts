@@ -135,7 +135,7 @@ export interface MenuItem {
   onSelect?: () => void
 }
 
-export type DialogKind = 'branch' | 'discard' | 'history' | 'remote'
+export type DialogKind = 'branch' | 'discard'
 
 export interface DialogConfig {
   kind: DialogKind

@@ -1019,7 +1019,7 @@ window.__ModuleLoader__.load({
     };
 
     // src/client/selfcheck.ts
-    var BUILD_MARKER = true ? "mw1xcoec-53wa" : "";
+    var BUILD_MARKER = true ? "mw1xnxyl-njic" : "";
     var PLUGIN_ID = true ? "@local/dsh-git-view" : "@local/dsh-git-view";
     var GUARD_PREFIX = "dsh.git-view.selfcheck.";
     var DEFAULT_TIMEOUT_MS = 5e3;
@@ -4918,23 +4918,6 @@ window.__ModuleLoader__.load({
         },
         [repoId, actionBusy, details, translate, showRepoNotice, refresh, api, reportError]
       );
-      const requestHistoryOp = React16.useCallback(
-        (op, hashArg) => {
-          const hash = hashArg || (details && details.hash ? details.hash : "");
-          if (op !== "undo" && !hash) return;
-          setActionError("");
-          setActionDialog({
-            kind: "history",
-            op,
-            payload: hash ? { hash } : {},
-            title: translate(historyLabelKey(op)),
-            description: translate(historyHintKey(op)),
-            confirmLabel: translate(historyLabelKey(op)),
-            danger: op === "undo" || op === "checkout"
-          });
-        },
-        [details, translate]
-      );
       const requestAbortOperation = React16.useCallback(() => {
         setActionError("");
         setActionDialog({
@@ -4974,13 +4957,17 @@ window.__ModuleLoader__.load({
             items.push({
               id: "checkout",
               label: translate("checkoutCommit"),
-              onSelect: () => requestHistoryOp("checkout", commit.hash)
+              onSelect: () => {
+                void executeHistoryOp("checkout", commit.hash);
+              }
             });
             if (!isMerge) {
               items.push({
                 id: "cherryPick",
                 label: translate("cherryPickCommit"),
-                onSelect: () => requestHistoryOp("cherryPick", commit.hash)
+                onSelect: () => {
+                  void executeHistoryOp("cherryPick", commit.hash);
+                }
               });
             }
           }
@@ -4988,7 +4975,9 @@ window.__ModuleLoader__.load({
             items.push({
               id: "revert",
               label: translate("revertCommit"),
-              onSelect: () => requestHistoryOp("revert", commit.hash)
+              onSelect: () => {
+                void executeHistoryOp("revert", commit.hash);
+              }
             });
           }
           if (isHead) {
@@ -4997,12 +4986,14 @@ window.__ModuleLoader__.load({
               id: "undo",
               label: translate("undoCommit"),
               danger: true,
-              onSelect: () => requestHistoryOp("undo", commit.hash)
+              onSelect: () => {
+                void executeHistoryOp("undo", commit.hash);
+              }
             });
           }
           return items;
         },
-        [log, translate, copyHash, requestHistoryOp]
+        [log, translate, copyHash, executeHistoryOp]
       );
       const openCommitMenu = React16.useCallback((commit, point) => {
         setSelected(commit.hash);
@@ -5017,10 +5008,6 @@ window.__ModuleLoader__.load({
           if (!dialog || actionBusy) return;
           if (dialog.kind === "discard") {
             void executeDiscard(dialog.entry);
-            return;
-          }
-          if (dialog.kind === "history") {
-            void executeHistoryOp(dialog.op ?? "");
             return;
           }
           const payload = { ...dialog.payload || {} };
@@ -5041,7 +5028,7 @@ window.__ModuleLoader__.load({
           if (dialog.op === "delete") payload.force = Boolean(checked);
           void executeBranchOp(dialog.op || "", payload);
         },
-        [actionDialog, actionBusy, executeBranchOp, executeDiscard, executeHistoryOp, translate]
+        [actionDialog, actionBusy, executeBranchOp, executeDiscard, translate]
       );
       const closeActionDialog = React16.useCallback(() => {
         if (actionBusy) return;
@@ -5078,14 +5065,9 @@ window.__ModuleLoader__.load({
               id: "checkout",
               label: translate("checkoutBranch"),
               hint: name,
-              onSelect: open({
-                kind: "branch",
-                op: "checkout",
-                title: translate("checkoutBranch"),
-                description: `${translate("checkoutBranch")} · ${name}`,
-                confirmLabel: translate("checkoutBranch"),
-                payload: { branch: name }
-              })
+              onSelect: () => {
+                void executeBranchOp("checkout", { branch: name });
+              }
             });
           }
           if (entry && entry.kind === "remote") {
@@ -5095,20 +5077,19 @@ window.__ModuleLoader__.load({
               id: "checkout-remote",
               label: translate("checkoutRemote"),
               hint: name,
-              onSelect: open({
-                kind: "branch",
-                op: "create",
-                title: translate("checkoutRemote"),
-                description: name,
-                input: true,
-                label: translate("branchName"),
-                initialValue: localNameForRemote(name),
-                placeholder: translate("branchName"),
-                confirmLabel: translate("checkoutBranch"),
-                checkboxLabel: translate("checkoutAfterCreate"),
-                checkboxDefault: true,
-                payload: { startRef: remoteRef }
-              })
+              onSelect: () => {
+                const localName = localNameForRemote(name);
+                const existing = (log?.refs || []).find((ref) => ref.kind === "branch" && ref.name === localName);
+                if (existing) {
+                  void executeBranchOp("checkout", { branch: localName });
+                  return;
+                }
+                void executeBranchOp("create", {
+                  branch: localName,
+                  startRef: remoteRef,
+                  checkout: true
+                });
+              }
             });
           }
           items.push({
@@ -5177,27 +5158,17 @@ window.__ModuleLoader__.load({
               id: "merge",
               label: translate("mergeBranch"),
               hint: `${entryName} → ${current}`,
-              onSelect: open({
-                kind: "branch",
-                op: "merge",
-                title: translate("mergeBranch"),
-                description: `${translate("mergeBranch")} · ${entryName} → ${current}`,
-                confirmLabel: translate("mergeBranch"),
-                payload: { ref: targetRef }
-              })
+              onSelect: () => {
+                void executeBranchOp("merge", { ref: targetRef });
+              }
             });
             items.push({
               id: "rebase",
               label: translate("rebaseBranch"),
               hint: `${current} → ${entryName}`,
-              onSelect: open({
-                kind: "branch",
-                op: "rebase",
-                title: translate("rebaseBranch"),
-                description: `${translate("rebaseBranch")} · ${current} → ${entryName}`,
-                confirmLabel: translate("rebaseBranch"),
-                payload: { ref: targetRef }
-              })
+              onSelect: () => {
+                void executeBranchOp("rebase", { ref: targetRef });
+              }
             });
           }
           if (branchState && branchState.operation) {
@@ -5228,7 +5199,7 @@ window.__ModuleLoader__.load({
           }
           return items;
         },
-        [branchState, translate, executeBranchOp, refValue]
+        [branchState, translate, executeBranchOp, refValue, log]
       );
       const branchOptions = React16.useMemo(() => {
         const options = [
@@ -5342,14 +5313,7 @@ window.__ModuleLoader__.load({
           onContinue: () => {
             void executeBranchOp("continue", {});
           },
-          onAbort: () => setActionDialog({
-            kind: "branch",
-            op: "abort",
-            title: translate("abortOperation"),
-            description: translate("branchAbortConfirm"),
-            confirmLabel: translate("abortOperation"),
-            danger: true
-          }),
+          onAbort: requestAbortOperation,
           busy: actionBusy
         }) : null
       );
@@ -5371,7 +5335,7 @@ window.__ModuleLoader__.load({
           onCopy: copyHash,
           onCompare: openCompare,
           onSelectHash: chooseCommit,
-          onHistory: requestHistoryOp
+          onHistory: executeHistoryOp
         })
       );
       const leftHandle = compact ? null : h16(ResizeHandle, {

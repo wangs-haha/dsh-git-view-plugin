@@ -30,7 +30,6 @@ import {
   TABLE_CHROME_WIDTH,
 } from './metrics.js'
 import {
-  historyHintKey,
   historyLabelKey,
   localNameForRemote,
   looksLikeBranchName,
@@ -1223,24 +1222,6 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
     [repoId, actionBusy, details, translate, showRepoNotice, refresh, api, reportError],
   )
 
-  const requestHistoryOp = React.useCallback(
-    (op: string, hashArg?: string) => {
-      const hash = hashArg || (details && details.hash ? details.hash : '')
-      if (op !== 'undo' && !hash) return
-      setActionError('')
-      setActionDialog({
-        kind: 'history',
-        op,
-        payload: hash ? { hash } : {},
-        title: translate(historyLabelKey(op)),
-        description: translate(historyHintKey(op)),
-        confirmLabel: translate(historyLabelKey(op)),
-        danger: op === 'undo' || op === 'checkout',
-      })
-    },
-    [details, translate],
-  )
-
   const requestAbortOperation = React.useCallback(() => {
     setActionError('')
     setActionDialog({
@@ -1289,13 +1270,17 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         items.push({
           id: 'checkout',
           label: translate('checkoutCommit'),
-          onSelect: () => requestHistoryOp('checkout', commit.hash),
+          onSelect: () => {
+            void executeHistoryOp('checkout', commit.hash)
+          },
         })
         if (!isMerge) {
           items.push({
             id: 'cherryPick',
             label: translate('cherryPickCommit'),
-            onSelect: () => requestHistoryOp('cherryPick', commit.hash),
+            onSelect: () => {
+              void executeHistoryOp('cherryPick', commit.hash)
+            },
           })
         }
       }
@@ -1303,7 +1288,9 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         items.push({
           id: 'revert',
           label: translate('revertCommit'),
-          onSelect: () => requestHistoryOp('revert', commit.hash),
+          onSelect: () => {
+            void executeHistoryOp('revert', commit.hash)
+          },
         })
       }
       if (isHead) {
@@ -1312,12 +1299,14 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
           id: 'undo',
           label: translate('undoCommit'),
           danger: true,
-          onSelect: () => requestHistoryOp('undo', commit.hash),
+          onSelect: () => {
+            void executeHistoryOp('undo', commit.hash)
+          },
         })
       }
       return items
     },
-    [log, translate, copyHash, requestHistoryOp],
+    [log, translate, copyHash, executeHistoryOp],
   )
 
   const openCommitMenu = React.useCallback((commit: CommitRow, point: { x: number; y: number }) => {
@@ -1335,10 +1324,6 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
       if (!dialog || actionBusy) return
       if (dialog.kind === 'discard') {
         void executeDiscard(dialog.entry)
-        return
-      }
-      if (dialog.kind === 'history') {
-        void executeHistoryOp(dialog.op ?? '')
         return
       }
       const payload: Record<string, unknown> = { ...(dialog.payload || {}) }
@@ -1359,7 +1344,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
       if (dialog.op === 'delete') payload.force = Boolean(checked)
       void executeBranchOp(dialog.op || '', payload)
     },
-    [actionDialog, actionBusy, executeBranchOp, executeDiscard, executeHistoryOp, translate],
+    [actionDialog, actionBusy, executeBranchOp, executeDiscard, translate],
   )
 
   const closeActionDialog = React.useCallback(() => {
@@ -1410,14 +1395,9 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
           id: 'checkout',
           label: translate('checkoutBranch'),
           hint: name,
-          onSelect: open({
-            kind: 'branch',
-            op: 'checkout',
-            title: translate('checkoutBranch'),
-            description: `${translate('checkoutBranch')} · ${name}`,
-            confirmLabel: translate('checkoutBranch'),
-            payload: { branch: name },
-          }),
+          onSelect: () => {
+            void executeBranchOp('checkout', { branch: name })
+          },
         })
       }
       if (entry && entry.kind === 'remote') {
@@ -1427,20 +1407,19 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
           id: 'checkout-remote',
           label: translate('checkoutRemote'),
           hint: name,
-          onSelect: open({
-            kind: 'branch',
-            op: 'create',
-            title: translate('checkoutRemote'),
-            description: name,
-            input: true,
-            label: translate('branchName'),
-            initialValue: localNameForRemote(name),
-            placeholder: translate('branchName'),
-            confirmLabel: translate('checkoutBranch'),
-            checkboxLabel: translate('checkoutAfterCreate'),
-            checkboxDefault: true,
-            payload: { startRef: remoteRef },
-          }),
+          onSelect: () => {
+            const localName = localNameForRemote(name)
+            const existing = (log?.refs || []).find((ref) => ref.kind === 'branch' && ref.name === localName)
+            if (existing) {
+              void executeBranchOp('checkout', { branch: localName })
+              return
+            }
+            void executeBranchOp('create', {
+              branch: localName,
+              startRef: remoteRef,
+              checkout: true,
+            })
+          },
         })
       }
       items.push({
@@ -1509,27 +1488,17 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
           id: 'merge',
           label: translate('mergeBranch'),
           hint: `${entryName} → ${current}`,
-          onSelect: open({
-            kind: 'branch',
-            op: 'merge',
-            title: translate('mergeBranch'),
-            description: `${translate('mergeBranch')} · ${entryName} → ${current}`,
-            confirmLabel: translate('mergeBranch'),
-            payload: { ref: targetRef },
-          }),
+          onSelect: () => {
+            void executeBranchOp('merge', { ref: targetRef })
+          },
         })
         items.push({
           id: 'rebase',
           label: translate('rebaseBranch'),
           hint: `${current} → ${entryName}`,
-          onSelect: open({
-            kind: 'branch',
-            op: 'rebase',
-            title: translate('rebaseBranch'),
-            description: `${translate('rebaseBranch')} · ${current} → ${entryName}`,
-            confirmLabel: translate('rebaseBranch'),
-            payload: { ref: targetRef },
-          }),
+          onSelect: () => {
+            void executeBranchOp('rebase', { ref: targetRef })
+          },
         })
       }
       if (branchState && branchState.operation) {
@@ -1560,7 +1529,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
       }
       return items
     },
-    [branchState, translate, executeBranchOp, refValue],
+    [branchState, translate, executeBranchOp, refValue, log],
   )
 
   const branchOptions = React.useMemo<DropdownOption[]>(() => {
@@ -1687,15 +1656,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
           onContinue: () => {
             void executeBranchOp('continue', {})
           },
-          onAbort: () =>
-            setActionDialog({
-              kind: 'branch',
-              op: 'abort',
-              title: translate('abortOperation'),
-              description: translate('branchAbortConfirm'),
-              confirmLabel: translate('abortOperation'),
-              danger: true,
-            }),
+          onAbort: requestAbortOperation,
           busy: actionBusy,
         })
       : null,
@@ -1719,7 +1680,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
       onCopy: copyHash,
       onCompare: openCompare,
       onSelectHash: chooseCommit,
-      onHistory: requestHistoryOp,
+      onHistory: executeHistoryOp,
     }),
   )
 
