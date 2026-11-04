@@ -17,9 +17,17 @@ import {
   readLog,
   readStatus,
   readTree,
+  readWorktreeTree,
   readWorkingSummary,
 } from './git-data.js'
-import { discardChanges, readRepoState, runBranchOperation, stageResolvedPaths } from './git-ops.js'
+import {
+  commitHistoryOperation,
+  discardChanges,
+  readRepoState,
+  rollbackChanges,
+  runBranchOperation,
+  stageResolvedPaths,
+} from './git-ops.js'
 
 /** The authenticated route the Client half reads Git data from. */
 export const ROUTE_PATH = '/api/git-view'
@@ -109,31 +117,53 @@ export function apply(ctx) {
   }
 
   /**
-   * Ask the composed default model for one Conventional Commit subject line.
+   * Derive a Conventional Commit `scope` from the selected paths: the deepest
+   * directory every path shares, reduced to its last segment.
+   * @param {string[]} paths - repository-relative paths.
+   * @param {boolean} all - whether the whole working tree is included.
+   * @returns {string} scope, or an empty string when the selection has none.
+   */
+  function deriveScope(paths, all) {
+    if (all || paths.length === 0) return ''
+    const dirs = paths.map((path) => {
+      const segments = String(path).split('/').filter(Boolean)
+      return segments.slice(0, -1)
+    })
+    if (dirs.some((segments) => segments.length === 0)) return ''
+    let common = dirs[0].slice()
+    for (const segments of dirs.slice(1)) {
+      let index = 0
+      while (index < common.length && index < segments.length && common[index] === segments[index]) index += 1
+      common = common.slice(0, index)
+    }
+    if (common.length === 0) return ''
+    return common[common.length - 1].replace(/[^a-zA-Z0-9._-]/g, '').slice(0, 32)
+  }
+
+  /**
+   * Ask the composed default model for one `type(scope): subject` line the user
+   * can edit before committing. The model never commits anything.
    * @param {object} repo - resolved repository.
    * @param {string[]} paths - selected paths, or [] for every change.
    * @param {boolean} all - whether every change is included.
    * @param {string} locale - UI locale hint.
    * @param {AbortSignal} signal - request cancellation.
-   * @returns {Promise<string>} the generated subject.
+   * @returns {Promise<string>} the generated subject line.
    */
   async function suggestCommitMessage(repo, paths, all, locale, signal) {
     const llm = ctx.get('llm')
     const defaultModel = ctx.get('agentDefaultModel')
     if (!llm || !defaultModel) {
-      throw new GitError('AI commit is unavailable: the LLM service is not mounted', 503)
+      throw new GitError('the LLM service is not mounted', 503)
     }
     let selection
     try {
       selection = defaultModel.currentSelection()
     } catch (error) {
-      throw new GitError(
-        `AI commit is unavailable: ${error instanceof Error ? error.message : String(error)}`,
-        503,
-      )
+      throw new GitError(error instanceof Error ? error.message : String(error), 503)
     }
     if (!selection || !selection.provider || !selection.model) {
-      throw new GitError('AI commit is unavailable: no default model is configured', 503)
+      throw new GitError('no default model is configured', 503)
     }
 
     const entries = await readStatus(repo.root)
@@ -145,53 +175,130 @@ export function apply(ctx) {
       .map((entry) => `${entry.status} ${entry.path}`)
       .join('\n')
     const diff = await readWorkingSummary(repo.root, paths, all)
-    const language = String(locale || '').toLowerCase().startsWith('zh') ? 'Simplified Chinese' : 'English'
+    const scope = deriveScope(paths, all)
+    const language = String(locale || '').toLowerCase().startsWith('zh') ? '简体中文' : 'English'
+    let recent = []
+    try {
+      const history = await readLog(repo.root, '', 8, '')
+      recent = history.commits.map((commit) => commit.subject).filter(Boolean)
+    } catch {
+      recent = []
+    }
+
     const prompt = [
-      `Repository: ${repo.title}`,
-      `Changed files:`,
+      `分支：${repo.title}`,
+      `scope 建议：${scope || '（省略）'}`,
+      '',
+      '本次改动的文件：',
       names || '(none)',
       '',
-      'Diff:',
+      'Diff：',
       diff || '(no textual diff; only untracked or binary files)',
+      '',
+      '最近的提交标题（仅用于参考语气与用词，不要照抄）：',
+      recent.length ? recent.map((subject) => `- ${subject}`).join('\n') : '(none)',
     ].join('\n')
 
-    let text = ''
-    try {
+    const system = [
+      '你是一名资深工程师，负责为一次改动写提交信息首行，遵循 Conventional Commits 规范。',
+      `只输出一行，格式严格为：type(scope): 主题（使用中文时冒号后用中文，主题用${language}书写）。`,
+      'type 必须是以下之一：feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert。',
+      `scope 规则：${scope ? `优先使用「${scope}」。` : '若改动集中在某个目录/模块，可用其最后一段作为 scope；否则省略 scope，写成 type: 主题。'}`,
+      '主题要求：祈使句、说明做了什么而不是怎么做、不超过 60 个字符、结尾不加句号、不使用引号或反引号。',
+      '不要输出解释、不要输出代码块、不要输出多行。',
+    ].join('\n')
+
+    /**
+     * One streaming attempt. A reasoning model can spend the whole token budget
+     * on reasoning and return no text, so the caller retries with a larger
+     * budget and no reasoning effort.
+     * @param {string|undefined} effort - reasoning effort to request.
+     * @param {number} budget - max tokens for the attempt.
+     * @returns {Promise<{ text: string, finish: string }>} collected text and finish reason.
+     */
+    const streamOnce = async (effort, budget) => {
+      let text = ''
+      let finish = ''
       for await (const chunk of llm.stream({
         provider: selection.provider,
         model: selection.model,
-        ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}),
-        system: `You write one concise Conventional Commit subject line in ${language}. Return only the subject line, without quotes or a body, at most 72 characters.`,
+        ...(effort ? { reasoningEffort: effort } : {}),
+        system,
         messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
-        maxTokens: 160,
+        maxTokens: budget,
         temperature: 0.2,
         signal,
       })) {
         if (chunk.type === 'text-delta') {
           text += chunk.text
-        } else if (chunk.type === 'finish' && (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted')) {
-          const failure = chunk.reason.failure
-          throw new GitError(
-            `AI commit message failed: ${failure && failure.message ? failure.message : chunk.reason.kind}`,
-            502,
-          )
+        } else if (chunk.type === 'finish') {
+          finish = chunk.reason && chunk.reason.kind ? chunk.reason.kind : 'unknown'
+          if (finish === 'error' || finish === 'aborted') {
+            const failure = chunk.reason.failure
+            throw new GitError(
+              `提交信息生成失败：${failure && failure.message ? failure.message : finish}`,
+              502,
+            )
+          }
         }
+      }
+      return { text, finish }
+    }
+
+    let collected
+    try {
+      collected = await streamOnce(selection.reasoningEffort, 600)
+      if (!collected.text.trim()) {
+        // Reasoning consumed the budget, or the provider returned nothing: retry
+        // without reasoning and with more room before reporting a failure.
+        collected = await streamOnce(undefined, 900)
       }
     } catch (error) {
       if (error instanceof GitError) throw error
-      throw new GitError(
-        `AI commit message failed: ${error instanceof Error ? error.message : String(error)}`,
-        502,
-      )
+      if (error && error.name === 'AbortError') throw error
+      throw new GitError(`提交信息生成失败：${error instanceof Error ? error.message : String(error)}`, 502)
+    }
+    if (!collected.text.trim()) {
+      throw new GitError(`模型没有返回内容（finish: ${collected.finish || 'unknown'}）`, 502)
     }
 
-    const first = text
+    return normalizeCommitSubject(collected.text, scope)
+  }
+
+  /**
+   * Reduce a model reply to one clean `type(scope): subject` line, coercing
+   * answers that ignore the format instead of failing the request.
+   * @param {string} raw - model output.
+   * @param {string} scope - scope the panel suggested.
+   * @returns {string} the normalized subject line.
+   */
+  function normalizeCommitSubject(raw, scope) {
+    const cleaned = String(raw || '')
+      .replace(/```[a-zA-Z]*/g, ' ')
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .filter(Boolean)[0] || ''
-    const cleaned = first.replace(/[\u0000-\u001f]/g, ' ').replace(/^[`"'\s]+|[`"'\s]+$/g, '').slice(0, 120)
-    if (!cleaned) throw new GitError('AI did not return a commit message', 502)
-    return cleaned
+      .filter(Boolean)
+      .find((line) => line.length > 0) || ''
+    const line = cleaned
+      .replace(/[\u0000-\u001f]/g, ' ')
+      .replace(/^\s*(?:[-*]|\d+\.)\s*/, '')
+      .replace(/^[`"'\s]+|[`"'\s]+$/g, '')
+      .replace(/：/, ':')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!line) throw new GitError('模型没有返回提交信息', 502)
+    const types = 'feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
+    const pattern = new RegExp(`^(${types})(\\(([^)]{1,40})\\))?!?:\\s*(.+)$`, 'i')
+    const match = line.match(pattern)
+    if (!match) {
+      const subject = line.replace(/^(提交信息|commit message)\s*[:：]\s*/i, '').slice(0, 60)
+      return `${'chore'}${scope ? `(${scope})` : ''}: ${subject}`
+    }
+    const type = match[1].toLowerCase()
+    const foundScope = (match[3] || '').trim()
+    const subject = match[4].trim().replace(/[。.]$/, '').slice(0, 60)
+    const finalScope = foundScope || scope
+    return `${type}${finalScope ? `(${finalScope})` : ''}: ${subject}`
   }
 
   /**
@@ -266,8 +373,13 @@ export function apply(ctx) {
       if (action === 'tree') {
         const ref = (url.searchParams.get('ref') || '').slice(0, 500)
         const scope = cleanScope(url.searchParams.get('path'))
-        const entries = await readTree(repo.root, ref, scope)
-        return jsonResponse({ repo, ref, path: scope, entries })
+        const requested = url.searchParams.get('mode')
+        // The working tree is the default so untracked files are visible; a ref
+        // is only read when the panel is showing that revision's file list.
+        const mode = requested === 'ref' || (!requested && ref) ? 'ref' : 'worktree'
+        const entries =
+          mode === 'ref' ? await readTree(repo.root, ref, scope) : await readWorktreeTree(repo.root, scope)
+        return jsonResponse({ repo, ref, path: scope, mode, entries })
       }
 
       if (action === 'log') {
@@ -308,13 +420,18 @@ export function apply(ctx) {
   }
 
   /**
-   * Commit working-tree changes, optionally generating the message with AI.
+   * Commit working-tree changes.
    * @param {object} repo - resolved repository.
    * @param {object} body - parsed request body.
    * @param {Request} request - authenticated browser request.
    * @returns {Promise<Response>} JSON response.
    */
   async function handleCommitWrite(repo, body, request) {
+    if (body.ai === true) {
+      // The panel asks for a draft first and commits it afterwards, so the user
+      // can review the message. Keep the old behavior out of reach.
+      throw new GitError('generate the commit message first, then commit it', 400)
+    }
     const release = beginWrite(repo.root)
     try {
       const all = body.all === true
@@ -335,17 +452,11 @@ export function apply(ctx) {
         throw new GitError('resolve merge conflicts before committing', 409)
       }
 
-      let message = typeof body.message === 'string' ? body.message.trim() : ''
-      let ai = false
-      if (body.ai === true) {
-        message = await suggestCommitMessage(repo, paths, all, body.locale, request.signal)
-        ai = true
-      }
+      const message = typeof body.message === 'string' ? body.message.trim() : ''
       const result = await commitChanges(repo.root, message, paths, all)
       const state = await readRepoState(repo.root).catch(() => null)
       return jsonResponse({
         ok: true,
-        ai,
         message: result.message,
         hash: result.hash,
         shortHash: result.hash.slice(0, 7),
@@ -354,6 +465,30 @@ export function apply(ctx) {
     } finally {
       release()
     }
+  }
+
+  /**
+   * Generate one commit message draft without touching the repository. This
+   * intentionally does not take the write lock: an LLM call must not block
+   * commits, merges, or rollbacks.
+   * @param {object} repo - resolved repository.
+   * @param {object} body - parsed request body.
+   * @param {Request} request - authenticated browser request.
+   * @returns {Promise<Response>} JSON response.
+   */
+  async function handleMessageWrite(repo, body, request) {
+    const all = body.all === true
+    const paths = Array.isArray(body.paths)
+      ? [...new Set(body.paths.map((value) => cleanScope(String(value || ''))).filter(Boolean))]
+      : []
+    if (!all && paths.length === 0) throw new GitError('select at least one changed file', 400)
+    if (paths.length > 200) throw new GitError('too many files in one request', 400)
+    const entries = await readStatus(repo.root)
+    const inScope = (entry) =>
+      all || paths.some((path) => entry.path === path || entry.path.startsWith(`${path}/`))
+    if (!entries.some(inScope)) throw new GitError('selected files have no changes', 422)
+    const message = await suggestCommitMessage(repo, paths, all, body.locale, request.signal)
+    return jsonResponse({ ok: true, message })
   }
 
   /**
@@ -386,6 +521,43 @@ export function apply(ctx) {
     const release = beginWrite(repo.root)
     try {
       const result = await discardChanges(repo.root, paths)
+      const state = await readRepoState(repo.root).catch(() => null)
+      return jsonResponse({ ok: true, ...result, ...(state ? { state } : {}) })
+    } finally {
+      release()
+    }
+  }
+
+  /**
+   * Roll back a multi-file selection (optionally keeping newly added files).
+   * @param {object} repo - resolved repository.
+   * @param {object} body - parsed request body.
+   * @returns {Promise<Response>} JSON response.
+   */
+  async function handleRollbackWrite(repo, body) {
+    const paths = Array.isArray(body.paths)
+      ? [...new Set(body.paths.map((value) => cleanScope(String(value || ''))).filter(Boolean))]
+      : []
+    const release = beginWrite(repo.root)
+    try {
+      const result = await rollbackChanges(repo.root, paths, { deleteAdded: body.deleteAdded !== false })
+      const state = await readRepoState(repo.root).catch(() => null)
+      return jsonResponse({ ok: true, ...result, ...(state ? { state } : {}) })
+    } finally {
+      release()
+    }
+  }
+
+  /**
+   * Undo, reset to, revert, cherry-pick, or check out one commit.
+   * @param {object} repo - resolved repository.
+   * @param {object} body - parsed request body.
+   * @returns {Promise<Response>} JSON response.
+   */
+  async function handleHistoryWrite(repo, body) {
+    const release = beginWrite(repo.root)
+    try {
+      const result = await commitHistoryOperation(repo.root, body)
       const state = await readRepoState(repo.root).catch(() => null)
       return jsonResponse({ ok: true, ...result, ...(state ? { state } : {}) })
     } finally {
@@ -435,8 +607,11 @@ export function apply(ctx) {
       repo = await resolveRepo(String(body.repo || ''))
       const action = typeof body.action === 'string' ? body.action : 'commit'
       if (action === 'commit') return await handleCommitWrite(repo, body, request)
+      if (action === 'message') return await handleMessageWrite(repo, body, request)
       if (action === 'branch') return await handleBranchWrite(repo, body)
       if (action === 'discard') return await handleDiscardWrite(repo, body)
+      if (action === 'rollback') return await handleRollbackWrite(repo, body)
+      if (action === 'history') return await handleHistoryWrite(repo, body)
       if (action === 'resolve') return await handleResolveWrite(repo, body)
       throw new GitError('unknown action', 404)
     } catch (error) {

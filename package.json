@@ -1,9 +1,9 @@
 {
   "name": "@local/dsh-git-view",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
-  "description": "IntelliJ-style Git panel: file tree, commit graph, branch operations, side-by-side diffs, partial or AI-assisted commits, and state-aware discard.",
+  "description": "IntelliJ-style Git panel: workspace file tree, commit graph, per-branch actions, side-by-side diffs, rollback, AI-drafted commit messages, and history operations.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

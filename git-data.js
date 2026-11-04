@@ -217,6 +217,83 @@ export async function readTree(root, ref, path) {
 }
 
 /**
+ * List the immediate children of one directory in the working tree.
+ *
+ * Unlike {@link readTree} this reads the working tree, not one commit's tree, so
+ * untracked files and directories that are not committed yet are visible. Paths
+ * match the `.gitignore` rules Git itself applies, and every entry carries the
+ * status letter the changes list would show for it.
+ *
+ * @param {string} root - repository root.
+ * @param {string} path - repository-relative directory path ('' for the root).
+ * @returns {Promise<Array<{ name: string, path: string, type: 'tree'|'blob', status: string, untracked: boolean, conflict: boolean, dirty: boolean }>>}
+ */
+export async function readWorktreeTree(root, path = '') {
+  const scope = String(path || '').replace(/^\/+|\/+$/g, '')
+  const prefix = scope ? `${scope}/` : ''
+  const [listed, status] = await Promise.all([
+    runGit(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+      maxBuffer: 32 * 1024 * 1024,
+    }),
+    readStatus(root),
+  ])
+
+  const byPath = new Map(status.map((entry) => [entry.path, entry]))
+  /** @type {Map<string, true>} */
+  const dirs = new Map()
+  /** @type {Array<{ name: string, path: string, type: 'blob', status: string, untracked: boolean, conflict: boolean }>} */
+  const files = []
+  const dirtyDirs = new Set()
+
+  for (const changed of byPath.keys()) {
+    if (!changed.startsWith(prefix)) continue
+    const rest = changed.slice(prefix.length)
+    const slash = rest.indexOf('/')
+    if (slash > 0) dirtyDirs.add(rest.slice(0, slash))
+  }
+
+  for (const record of listed.split('\0')) {
+    if (!record || !record.startsWith(prefix)) continue
+    const rest = record.slice(prefix.length)
+    if (!rest) continue
+    const slash = rest.indexOf('/')
+    if (slash >= 0) {
+      dirs.set(rest.slice(0, slash), true)
+      continue
+    }
+    if (files.length >= 2000) break
+    const entry = byPath.get(record)
+    const untracked = Boolean(entry && entry.untracked)
+    const conflict = Boolean(entry && entry.conflict)
+    const letter = conflict ? 'U' : untracked ? '?' : entry ? entry.status : ''
+    files.push({
+      name: rest,
+      path: record,
+      type: 'blob',
+      status: letter || '',
+      untracked,
+      conflict,
+    })
+  }
+
+  const entries = []
+  for (const name of [...dirs.keys()].sort((a, b) => a.localeCompare(b))) {
+    entries.push({
+      name,
+      path: prefix ? `${prefix}${name}` : name,
+      type: 'tree',
+      status: '',
+      untracked: false,
+      conflict: false,
+      dirty: dirtyDirs.has(name),
+    })
+  }
+  files.sort((a, b) => a.name.localeCompare(b.name))
+  for (const file of files) entries.push({ ...file, dirty: false })
+  return entries
+}
+
+/**
  * Build a commit list plus the ref catalogue a branch selector needs.
  * @param {string} root - repository root.
  * @param {string} ref - full ref to walk, or an empty string for every ref.

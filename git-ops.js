@@ -419,9 +419,11 @@ export async function abortOperation(root) {
  *
  * @param {string} root - repository root.
  * @param {unknown[]} rawPaths - repository-relative files the user confirmed.
+ * @param {{ deleteAdded?: boolean }} [options] - keep newly added files on disk when `deleteAdded` is false.
  * @returns {Promise<object>} operation result.
  */
-export async function discardChanges(root, rawPaths) {
+export async function discardChanges(root, rawPaths, options = {}) {
+  const deleteAdded = options.deleteAdded !== false
   const requested = [...new Set((Array.isArray(rawPaths) ? rawPaths : []).map((value) => String(value || '').trim()).filter(Boolean))]
   if (requested.length === 0) throw new GitError('select at least one changed file', 400)
   if (requested.length > 200) throw new GitError('too many files in one operation', 400)
@@ -433,6 +435,7 @@ export async function discardChanges(root, rawPaths) {
 
   const untracked = []
   const added = []
+  const keepAdded = []
   const tracked = []
   const addedCandidates = found.filter((entry) => !entry.untracked && !entry.conflict && entry.x === 'A')
   const headFiles = new Set()
@@ -456,9 +459,13 @@ export async function discardChanges(root, rawPaths) {
   }
   for (const entry of found) {
     if (entry.conflict) tracked.push(entry.path)
-    else if (entry.untracked) untracked.push(entry.path)
-    else if (entry.x === 'A' && !headFiles.has(entry.path)) added.push(entry.path)
-    else tracked.push(entry.path)
+    else if (entry.untracked) {
+      // Keeping local copies leaves untracked files untouched.
+      if (deleteAdded) untracked.push(entry.path)
+    } else if (entry.x === 'A' && !headFiles.has(entry.path)) {
+      if (deleteAdded) added.push(entry.path)
+      else keepAdded.push(entry.path)
+    } else tracked.push(entry.path)
   }
 
   const outputs = []
@@ -474,6 +481,10 @@ export async function discardChanges(root, rawPaths) {
   }
   if (added.length > 0) {
     await run(['rm', '-f', '--ignore-unmatch', '--', ...added], 'could not remove added files')
+  }
+  if (keepAdded.length > 0) {
+    // Unstage the new files but leave them on disk as untracked content.
+    await run(['rm', '--cached', '-r', '-q', '--ignore-unmatch', '--', ...keepAdded], 'could not unstage the added files')
   }
   if (tracked.length > 0) {
     let result = await runGitResult(root, [
@@ -496,8 +507,109 @@ export async function discardChanges(root, rawPaths) {
     op: 'discard',
     count: found.length,
     paths: found.map((entry) => entry.path),
+    kept: keepAdded,
     output: outputs.join('\n'),
   }
+}
+
+/**
+ * Roll back a multi-file selection, with IDEA's "delete local copies of added
+ * files" option: when it is off, newly added files are only unstaged.
+ * @param {string} root - repository root.
+ * @param {unknown[]} rawPaths - repository-relative files to roll back.
+ * @param {{ deleteAdded?: boolean }} [options] - whether new files are removed from disk.
+ * @returns {Promise<object>} operation result.
+ */
+export async function rollbackChanges(root, rawPaths, options = {}) {
+  const result = await discardChanges(root, rawPaths, options)
+  return { ...result, op: 'rollback' }
+}
+
+/**
+ * Validate a commit hash before it reaches git.
+ * @param {unknown} value - candidate hash.
+ * @returns {string} the trimmed lowercase hash.
+ */
+function assertCommitHash(value) {
+  const hash = String(value ?? '').trim()
+  if (!/^[0-9a-f]{4,64}$/i.test(hash)) throw new GitError('invalid commit hash', 400)
+  return hash
+}
+
+/**
+ * Run one write command and return its bounded output.
+ * @param {string} root - repository root.
+ * @param {string[]} args - git arguments.
+ * @param {string} fallback - message used when git printed nothing.
+ * @returns {Promise<string>} output text.
+ */
+async function runWrite(root, args, fallback) {
+  const result = await runGitResult(root, args)
+  if (result.code !== 0) throw writeFailure(result, fallback)
+  return outputText(result)
+}
+
+/**
+ * Parents of one commit, from `rev-list --parents`.
+ * @param {string} root - repository root.
+ * @param {string} ref - commit-ish.
+ * @returns {Promise<string[]>} parent hashes.
+ */
+async function resolveParents(root, ref) {
+  const out = await runGit(root, ['rev-list', '--parents', '-n', '1', ref, '--'])
+  const parts = out.trim().split(/\s+/).filter(Boolean)
+  return parts.slice(1)
+}
+
+/**
+ * Commit-level operations offered from the details pane: undo the last commit,
+ * reset to a commit, revert it, cherry-pick it, or check it out detached.
+ * Merge commits are refused for undo/revert/cherry-pick because they need a
+ * mainline parent the panel cannot choose for the user.
+ * @param {string} root - repository root.
+ * @param {Record<string, unknown>} params - `op`, `hash`, optional `mode`.
+ * @returns {Promise<object>} operation result.
+ */
+export async function commitHistoryOperation(root, params = {}) {
+  const op = String(params.op || '')
+  if (op === 'undo') {
+    const head = await readHead(root)
+    if (!head.hash) throw new GitError('the repository has no commits', 422)
+    const parents = await resolveParents(root, 'HEAD')
+    if (parents.length > 1) throw new GitError('cannot undo a merge commit — revert it instead', 409)
+    if (parents.length === 0) {
+      // The root commit has no parent: drop the branch pointer, keep the files.
+      const output = await runWrite(root, ['update-ref', '-d', 'HEAD'], 'could not undo the first commit')
+      return { op: 'undo', from: head.hash, to: null, output }
+    }
+    const output = await runWrite(root, ['reset', '--soft', parents[0], '--'], 'could not undo the last commit')
+    return { op: 'undo', from: head.hash, to: parents[0], output }
+  }
+
+  const hash = assertCommitHash(params.hash)
+  // rev-list validates the revision; an unknown hash throws before any write.
+  const parents = await resolveParents(root, hash)
+  const merge = parents.length > 1
+  if (op === 'reset') {
+    const mode = ['soft', 'mixed', 'hard'].includes(String(params.mode)) ? String(params.mode) : 'mixed'
+    const output = await runWrite(root, ['reset', `--${mode}`, hash, '--'], 'could not reset to that commit')
+    return { op: 'reset', mode, hash, output }
+  }
+  if (op === 'revert') {
+    if (merge) throw new GitError('reverting a merge commit is not supported here', 409)
+    const output = await runWrite(root, ['revert', '--no-edit', '--', hash], 'could not revert that commit')
+    return { op: 'revert', hash, output }
+  }
+  if (op === 'cherryPick') {
+    if (merge) throw new GitError('cherry-picking a merge commit is not supported here', 409)
+    const output = await runWrite(root, ['cherry-pick', '--', hash], 'could not cherry-pick that commit')
+    return { op: 'cherryPick', hash, output }
+  }
+  if (op === 'checkout') {
+    const output = await runWrite(root, ['switch', '--detach', hash], 'could not check out that commit')
+    return { op: 'checkout', hash, output }
+  }
+  throw new GitError('unknown history operation', 404)
 }
 
 /**

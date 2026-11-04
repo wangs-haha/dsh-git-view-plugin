@@ -99,6 +99,7 @@ window.__ModuleLoader__.load({
       tagSuffix: '（标签）',
       filesTab: '文件',
       rootLabel: '仓库根目录',
+      historyTreeHint: '历史文件树',
       treeEmpty: '没有可显示的文件',
       treeError: '目录读取失败',
       loadingTree: '正在读取目录…',
@@ -140,9 +141,29 @@ window.__ModuleLoader__.load({
       discarded: '已撤销',
       markResolved: '标记为已解决',
       resolved: '已标记为已解决',
-      aiCommit: 'AI 提交',
-      aiCommitHint: 'AI 生成提交信息并提交已勾选的文件',
       aiWorking: 'AI 正在生成提交信息…',
+      generateMessage: '生成信息',
+      regenerateMessage: '重新生成',
+      generateHint: '让当前默认模型根据已勾选文件写一条 type(scope): 描述，写入输入框，提交前可修改',
+      messageGenerated: '已生成提交信息，确认后点「提交」',
+      showHistory: '查看此分支历史',
+      rollback: '回滚…',
+      rollbackTitle: '回滚更改',
+      rollbackHint: '选择要还原的文件。回滚会丢弃这些文件的本地改动。',
+      rollbackConfirm: '回滚',
+      rollbackDeleteAdded: '删除新增文件的本地副本',
+      rollbackDone: '已回滚',
+      undoCommit: '撤销上次提交',
+      undoCommitHint: '把 HEAD 回退一个提交，改动保留在暂存区（soft reset）',
+      revertCommit: '还原此提交',
+      revertCommitHint: '生成一个反向提交，已推送的历史也可以安全使用',
+      cherryPickCommit: '拣选此提交',
+      cherryPickCommitHint: '把该提交的改动应用到当前分支',
+      checkoutCommit: '检出此提交',
+      checkoutCommitHint: '以分离 HEAD 的方式检出该提交（只读查看）',
+      historyDone: '操作完成',
+      commitActions: '提交操作',
+      copyCommitMessage: '复制提交信息',
       branchActions: '分支操作',
       checkoutBranch: '检出分支',
       checkoutRemote: '检出为本地分支…',
@@ -247,6 +268,7 @@ window.__ModuleLoader__.load({
       tagSuffix: ' (tag)',
       filesTab: 'Files',
       rootLabel: 'Repository root',
+      historyTreeHint: 'Revision tree',
       treeEmpty: 'No files to show',
       treeError: 'Could not read this folder',
       loadingTree: 'Reading folders…',
@@ -288,9 +310,29 @@ window.__ModuleLoader__.load({
       discarded: 'Discarded',
       markResolved: 'Mark resolved',
       resolved: 'Marked resolved',
-      aiCommit: 'AI commit',
-      aiCommitHint: 'Generate a message with AI and commit the checked files',
       aiWorking: 'AI is writing the commit message…',
+      generateMessage: 'Generate message',
+      regenerateMessage: 'Regenerate',
+      generateHint: 'Ask the default model for a type(scope): subject from the checked files and put it in the message box',
+      messageGenerated: 'Message drafted — review it, then commit',
+      showHistory: 'Show this history',
+      rollback: 'Rollback…',
+      rollbackTitle: 'Rollback changes',
+      rollbackHint: 'Choose the files to restore. Rollback discards their local changes.',
+      rollbackConfirm: 'Rollback',
+      rollbackDeleteAdded: 'Delete local copies of added files',
+      rollbackDone: 'Rolled back',
+      undoCommit: 'Undo last commit',
+      undoCommitHint: 'Move HEAD back one commit, keeping the changes staged (soft reset)',
+      revertCommit: 'Revert commit',
+      revertCommitHint: 'Create an inverse commit — safe for history that is already pushed',
+      cherryPickCommit: 'Cherry-pick',
+      cherryPickCommitHint: 'Apply this commit to the current branch',
+      checkoutCommit: 'Checkout commit',
+      checkoutCommitHint: 'Check out this commit with a detached HEAD (read-only)',
+      historyDone: 'Done',
+      commitActions: 'Commit actions',
+      copyCommitMessage: 'Copy commit message',
       branchActions: 'Branch actions',
       checkoutBranch: 'Checkout',
       checkoutRemote: 'Checkout as local branch…',
@@ -584,6 +626,30 @@ window.__ModuleLoader__.load({
       if (operation === 'revert') return t('operationRevert')
       if (operation === 'bisect') return t('operationBisect')
       return operation
+    }
+
+    /**
+     * Dictionary key for a commit-level action's label.
+     * @param {string} op - undo, revert, cherryPick, or checkout.
+     * @returns {string} dictionary key.
+     */
+    function historyLabelKey(op) {
+      if (op === 'undo') return 'undoCommit'
+      if (op === 'revert') return 'revertCommit'
+      if (op === 'cherryPick') return 'cherryPickCommit'
+      return 'checkoutCommit'
+    }
+
+    /**
+     * Dictionary key for a commit-level action's explanation.
+     * @param {string} op - undo, revert, cherryPick, or checkout.
+     * @returns {string} dictionary key.
+     */
+    function historyHintKey(op) {
+      if (op === 'undo') return 'undoCommitHint'
+      if (op === 'revert') return 'revertCommitHint'
+      if (op === 'cherryPick') return 'cherryPickCommitHint'
+      return 'checkoutCommitHint'
     }
 
     /**
@@ -1533,19 +1599,66 @@ window.__ModuleLoader__.load({
       const id = React.useId()
       const [open, setOpen] = useState(false)
       const [active, setActive] = useState(-1)
+      const [rowMenu, setRowMenu] = useState(-1)
+      const [rowMenuPos, setRowMenuPos] = useState(null)
       const rootRef = useRef(null)
       const menuRef = useRef(null)
+      const rowMenuRef = useRef(null)
       const selectedIndex = options.findIndex((option) => option.value === value)
       const current = selectedIndex >= 0 ? options[selectedIndex] : null
 
       useEffect(() => {
+        if (!open) setRowMenu(-1)
+      }, [open])
+
+      useEffect(() => {
+        if (rowMenu < 0 || !rowMenuRef.current) return
+        const node = rowMenuRef.current.querySelector('button')
+        if (node && typeof node.focus === 'function') node.focus()
+      }, [rowMenu])
+
+      useEffect(() => {
         if (!open) return undefined
         const onPointerDown = (event) => {
-          if (rootRef.current && !rootRef.current.contains(event.target)) setOpen(false)
+          if (rowMenuRef.current && rowMenuRef.current.contains(event.target)) return
+          if (rootRef.current && !rootRef.current.contains(event.target)) {
+            setOpen(false)
+            setRowMenu(-1)
+          }
         }
         document.addEventListener('mousedown', onPointerDown, true)
         return () => document.removeEventListener('mousedown', onPointerDown, true)
       }, [open])
+
+      /**
+       * Open the row's action menu as a side flyout next to the row, so the
+       * options read horizontally and are not clipped by the list's scroll box.
+       * @param {number} index - option index.
+       * @param {Element} anchor - the "…" button of that row.
+       */
+      const openRowMenu = (index, anchor) => {
+        if (rowMenu === index) {
+          setRowMenu(-1)
+          return
+        }
+        let rect = null
+        try {
+          rect = anchor.getBoundingClientRect()
+        } catch {
+          rect = null
+        }
+        if (!rect) {
+          setRowMenu(index)
+          return
+        }
+        const width = 232
+        const height = 320
+        setRowMenuPos({
+          left: Math.max(8, Math.min(rect.right + 6, window.innerWidth - width - 8)),
+          top: Math.max(8, Math.min(rect.top - 4, window.innerHeight - height - 8)),
+        })
+        setRowMenu(index)
+      }
 
       useEffect(() => {
         if (open) setActive(selectedIndex >= 0 ? selectedIndex : options.length > 0 ? 0 : -1)
@@ -1602,6 +1715,14 @@ window.__ModuleLoader__.load({
           setActive(options.length - 1)
           return
         }
+        if (event.key === 'ArrowRight' && active >= 0) {
+          const option = options[active]
+          if (option && Array.isArray(option.actions) && option.actions.length > 0) {
+            event.preventDefault()
+            setRowMenu(active)
+          }
+          return
+        }
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
           if (active >= 0) pick(active)
@@ -1617,6 +1738,7 @@ window.__ModuleLoader__.load({
         lastGroup = option.group || null
         const isActive = index === active
         const isSelected = option.value === value
+        const actions = Array.isArray(option.actions) ? option.actions : []
         const iconNode =
           option.icon === 'repo'
             ? h(FileIcon, { isDir: true, size: 14 })
@@ -1649,9 +1771,35 @@ window.__ModuleLoader__.load({
             ),
             option.head ? h('span', { className: 'gv-opt-head' }, t('head')) : null,
             isSelected ? h('span', { className: 'gv-opt-check', 'aria-hidden': true }, h(IconCheck, { size: 11 })) : null,
+            actions.length > 0
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: `gv-opt-action${rowMenu === index ? ' gv-opt-action-open' : ''}`,
+                    title: t('branchActions'),
+                    'aria-label': `${t('branchActions')} · ${option.label}`,
+                    'aria-haspopup': 'menu',
+                    'aria-expanded': rowMenu === index,
+                    tabIndex: -1,
+                    onClick: (event) => {
+                      event.stopPropagation()
+                      setActive(index)
+                      openRowMenu(index, event.currentTarget)
+                    },
+                    onMouseDown: (event) => event.stopPropagation(),
+                  },
+                  h(IconMore, { size: 14 }),
+                )
+              : null,
           ),
         )
       })
+
+      const activeActions =
+        rowMenu >= 0 && rowMenu < options.length && Array.isArray(options[rowMenu].actions)
+          ? options[rowMenu].actions
+          : null
 
       return h(
         'div',
@@ -1690,82 +1838,42 @@ window.__ModuleLoader__.load({
               rows.length > 0 ? rows : h('div', { className: 'gv-dropdown-empty' }, placeholder),
             )
           : null,
-      )
-    }
-
-    /**
-     * Compact popover menu used by the toolbar's branch actions.
-     * @param {object} props - label, items, disabled state.
-     * @returns {import('react').ReactElement} the menu.
-     */
-    function ActionMenu({ t, label, items, disabled }) {
-      const [open, setOpen] = useState(false)
-      const rootRef = useRef(null)
-
-      useEffect(() => {
-        if (!open) return undefined
-        const onPointerDown = (event) => {
-          if (rootRef.current && !rootRef.current.contains(event.target)) setOpen(false)
-        }
-        document.addEventListener('mousedown', onPointerDown, true)
-        return () => document.removeEventListener('mousedown', onPointerDown, true)
-      }, [open])
-
-      useEffect(() => {
-        if (disabled && open) setOpen(false)
-      }, [disabled, open])
-
-      const pick = (item) => () => {
-        if (item.disabled) return
-        setOpen(false)
-        item.onSelect()
-      }
-
-      return h(
-        'div',
-        { className: 'gv-action-menu', ref: rootRef },
-        h(
-          'button',
-          {
-            type: 'button',
-            className: `gv-icon-button gv-action-trigger${open ? ' gv-action-open' : ''}`,
-            title: label,
-            'aria-label': label,
-            'aria-haspopup': 'menu',
-            'aria-expanded': open,
-            disabled,
-            onClick: () => setOpen((value) => !value),
-            onKeyDown: (event) => {
-              if (event.key === 'Escape' && open) {
-                event.stopPropagation()
-                setOpen(false)
-              }
-            },
-          },
-          h(IconMore, { size: 15 }),
-        ),
-        open
-          ? h(
-              'div',
-              { className: 'gv-action-list', role: 'menu', 'aria-label': label },
-              items.map((item, index) =>
-                item.separator
-                  ? h('div', { key: `sep-${index}`, className: 'gv-action-sep', role: 'separator' })
-                  : h(
-                      'button',
-                      {
-                        key: item.id || `${item.label}-${index}`,
-                        type: 'button',
-                        role: 'menuitem',
-                        className: `gv-action-item${item.danger ? ' gv-action-danger' : ''}`,
-                        disabled: item.disabled,
-                        title: item.hint || item.label,
-                        onClick: pick(item),
-                      },
-                      h('span', { className: 'gv-action-label' }, item.label),
-                      item.hint ? h('span', { className: 'gv-action-hint' }, item.hint) : null,
-                    ),
+        activeActions && rowMenuPos
+          ? ReactDOM.createPortal(
+              h(
+                'div',
+                {
+                  className: 'gv-opt-menu',
+                  role: 'menu',
+                  'aria-label': t('branchActions'),
+                  ref: rowMenuRef,
+                  style: { left: `${rowMenuPos.left}px`, top: `${rowMenuPos.top}px` },
+                  onMouseDown: (event) => event.stopPropagation(),
+                },
+                activeActions.map((item, actionIndex) =>
+                  item.separator
+                    ? h('div', { key: `sep-${actionIndex}`, className: 'gv-opt-menu-sep', role: 'separator' })
+                    : h(
+                        'button',
+                        {
+                          key: item.id || `${item.label}-${actionIndex}`,
+                          type: 'button',
+                          role: 'menuitem',
+                          className: `gv-opt-menu-item${item.danger ? ' gv-action-danger' : ''}`,
+                          disabled: item.disabled,
+                          title: item.hint || item.label,
+                          onClick: () => {
+                            setRowMenu(-1)
+                            setOpen(false)
+                            item.onSelect()
+                          },
+                        },
+                        h('span', { className: 'gv-opt-menu-label' }, item.label),
+                        item.hint ? h('span', { className: 'gv-opt-menu-hint' }, item.hint) : null,
+                      ),
+                ),
               ),
+              document.body,
             )
           : null,
       )
@@ -1926,8 +2034,7 @@ window.__ModuleLoader__.load({
         log,
         refValue,
         onRef,
-        branchItems,
-        branchBusy,
+        branchOptions,
         query,
         onQuery,
         count,
@@ -1941,23 +2048,6 @@ window.__ModuleLoader__.load({
         description: repo.path,
         icon: 'repo',
       }))
-      const branchOptions = [{ value: '', label: t('allRefs'), icon: 'all' }]
-      if (log && Array.isArray(log.refs)) {
-        for (const entry of log.refs) {
-          branchOptions.push({
-            value: entry.ref,
-            label: `${entry.name}${entry.kind === 'tag' ? t('tagSuffix') : ''}`,
-            group:
-              entry.kind === 'branch'
-                ? t('localBranches')
-                : entry.kind === 'remote'
-                  ? t('remoteBranches')
-                  : t('tags'),
-            icon: entry.kind,
-            head: entry.head,
-          })
-        }
-      }
 
       return h(
         'div',
@@ -1979,18 +2069,12 @@ window.__ModuleLoader__.load({
           t,
           label: t('selectBranch'),
           value: refValue,
-          options: branchOptions,
+          options: branchOptions || [{ value: '', label: t('allRefs'), icon: 'all' }],
           onChange: onRef,
           disabled: !log,
           icon: 'branch',
           width: '210px',
           placeholder: t('branch'),
-        }),
-        h(ActionMenu, {
-          t,
-          label: t('branchActions'),
-          items: branchItems || [],
-          disabled: !log || branchBusy,
         }),
         h(
           'div',
@@ -2036,10 +2120,21 @@ window.__ModuleLoader__.load({
      * @returns {import('react').ReactElement} the tree pane.
      */
     function FileTreePane(props) {
-      const { t, repo, scope, children, expanded, loading, errors, onSelect, onToggle, onRetryRoot } = props
+      const { t, repo, scope, children, expanded, loading, errors, onSelect, onToggle, onRetryRoot, refName } = props
       const nodes = useMemo(() => flattenTree(children, expanded), [children, expanded])
       const rootLoading = loading.has('')
       const rootError = errors['']
+      const projectName = repo
+        ? repo.title || String(repo.root || '').split(/[\\/]/).filter(Boolean).pop() || ''
+        : ''
+      const statusTone = (letter) => {
+        if (letter === '?') return 'untracked'
+        if (letter === 'U') return 'conflict'
+        if (letter === 'A') return 'added'
+        if (letter === 'D') return 'deleted'
+        if (letter === 'R') return 'staged'
+        return 'modified'
+      }
 
       const activate = (event, callback) => {
         if (event.key !== 'Enter' && event.key !== ' ') return
@@ -2054,7 +2149,9 @@ window.__ModuleLoader__.load({
           'div',
           { className: 'gv-tree-head' },
           h('span', null, t('filesTab')),
-          h('span', { className: 'gv-tree-rootname', title: repo ? repo.root : '' }, repo ? repo.title : ''),
+          refName
+            ? h('span', { className: 'gv-tree-rootname gv-tree-refmode', title: refName }, `${t('historyTreeHint')} · ${refName}`)
+            : h('span', { className: 'gv-tree-rootname', title: repo ? repo.root : '' }, projectName),
         ),
         h(
           'div',
@@ -2067,11 +2164,12 @@ window.__ModuleLoader__.load({
               'aria-selected': scope === '',
               'aria-level': 1,
               tabIndex: 0,
+              title: repo ? repo.root : '',
               onClick: () => onSelect(null),
               onKeyDown: (event) => activate(event, () => onSelect(null)),
             },
             h(IconHome, { size: 13 }),
-            h('span', { className: 'gv-tree-name' }, t('rootLabel')),
+            h('span', { className: 'gv-tree-name' }, projectName || t('rootLabel')),
           ),
           nodes.map((node) => {
             const isDir = node.type === 'tree'
@@ -2111,6 +2209,17 @@ window.__ModuleLoader__.load({
                 : h('span', { className: 'gv-chevron-space' }),
               h(FileIcon, { name: node.name, isDir, open: isOpen, size: 14 }),
               h('span', { className: 'gv-tree-name' }, node.name),
+              isDir && node.dirty ? h('span', { className: 'gv-tree-dirty', title: t('modifiedHint'), 'aria-hidden': true }) : null,
+              !isDir && node.status
+                ? h(
+                    'span',
+                    {
+                      className: `gv-tree-status gv-tone-${statusTone(node.status)}`,
+                      title: node.status === '?' ? t('untracked') : t('modifiedHint'),
+                    },
+                    node.status,
+                  )
+                : null,
               isLoading ? h('span', { className: 'gv-tree-spinner', 'aria-hidden': true }) : null,
               error ? h('span', { className: 'gv-tree-error-mark', title: error }, '!') : null,
             )
@@ -2153,6 +2262,10 @@ window.__ModuleLoader__.load({
         onSelect,
         onRefresh,
         onClearScope,
+        onContinue,
+        onAbort,
+        onMenu,
+        busy,
       } = props
 
       const columns = narrow
@@ -2202,10 +2315,20 @@ window.__ModuleLoader__.load({
               'aria-selected': isSelected,
               title: `${commit.subject}\n${commit.author} <${commit.email}>\n${fullDate(commit.date)}\n${commit.hash}`,
               onClick: () => onSelect(commit.hash),
+              onContextMenu: (event) => {
+                event.preventDefault()
+                onMenu(commit, { x: event.clientX, y: event.clientY })
+              },
               onKeyDown: (event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault()
                   onSelect(commit.hash)
+                } else if (event.key === 'ContextMenu' || (event.key === 'F10' && event.shiftKey)) {
+                  event.preventDefault()
+                  const rect = typeof event.currentTarget.getBoundingClientRect === 'function'
+                    ? event.currentTarget.getBoundingClientRect()
+                    : { left: 0, top: 0, bottom: 0 }
+                  onMenu(commit, { x: rect.left + 40, y: rect.bottom })
                 }
               },
             },
@@ -2223,6 +2346,23 @@ window.__ModuleLoader__.load({
               ? null
               : h('span', { className: 'gv-date', title: fullDate(commit.date) }, shortDate(commit.date)),
             narrow ? null : h('span', { className: 'gv-hash' }, commit.hash.slice(0, 7)),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'gv-row-more',
+                title: t('commitActions'),
+                'aria-label': `${t('commitActions')} · ${commit.hash.slice(0, 7)}`,
+                'aria-haspopup': 'menu',
+                tabIndex: -1,
+                onClick: (event) => {
+                  event.stopPropagation()
+                  const rect = event.currentTarget.getBoundingClientRect()
+                  onMenu(commit, { x: rect.left, y: rect.bottom + 2 })
+                },
+              },
+              h(IconMore, { size: 14 }),
+            ),
           )
         })
       }
@@ -2297,6 +2437,36 @@ window.__ModuleLoader__.load({
                 operationLabel(state.operation, t),
               )
             : null,
+          state && state.operation && onContinue
+            ? h(
+                'span',
+                { className: 'gv-status-actions' },
+                state.operation !== 'bisect'
+                  ? h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'gv-status-btn',
+                        disabled: busy,
+                        title: t('continueOperation'),
+                        onClick: onContinue,
+                      },
+                      t('continueOperation'),
+                    )
+                  : null,
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'gv-status-btn gv-status-btn-danger',
+                    disabled: busy,
+                    title: t('abortOperation'),
+                    onClick: onAbort,
+                  },
+                  t('abortOperation'),
+                ),
+              )
+            : null,
           scope ? h('span', { className: 'gv-status-item' }, `· ${t('filteredBy')}`) : null,
           loading
             ? h(
@@ -2315,7 +2485,7 @@ window.__ModuleLoader__.load({
      * @returns {import('react').ReactElement} the details pane.
      */
     function DetailsPane(props) {
-      const { t, commit, details, loading, error, copied, scope, onCopy, onCompare } = props
+      const { t, commit, details, loading, error, copied, scope, headHash, onCopy, onCompare, onHistory } = props
       const spinner = h(Spinner, { label: t('loadingDetail') })
 
       let body = null
@@ -2409,6 +2579,33 @@ window.__ModuleLoader__.load({
                 )
               : null,
           ),
+          (() => {
+            const isHead = Boolean(headHash) && details.hash === headHash
+            const isMerge = Array.isArray(details.parents) && details.parents.length > 1
+            const items = []
+            if (isHead) items.push(['undo', t('undoCommit'), true])
+            if (!isMerge) items.push(['revert', t('revertCommit'), false])
+            if (!isHead && !isMerge) items.push(['cherryPick', t('cherryPickCommit'), false])
+            if (!isHead) items.push(['checkout', t('checkoutCommit'), false])
+            if (items.length === 0) return null
+            return h(
+              'div',
+              { className: 'gv-detail-actions' },
+              items.map(([op, label, danger]) =>
+                h(
+                  'button',
+                  {
+                    key: op,
+                    type: 'button',
+                    className: `gv-action-chip${danger ? ' gv-action-chip-danger' : ''}`,
+                    title: t(historyHintKey(op)),
+                    onClick: () => onHistory(op),
+                  },
+                  label,
+                ),
+              ),
+            )
+          })(),
           h(
             'div',
             { className: 'gv-section-title' },
@@ -2465,6 +2662,211 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Small floating menu anchored to a point (commit rows, etc.).
+     * @param {object} props - menu descriptor and close callback.
+     * @returns {import('react').ReactElement} the portal.
+     */
+    function PopupMenu({ t, menu, onClose }) {
+      const ref = useRef(null)
+
+      useEffect(() => {
+        const onPointerDown = (event) => {
+          if (ref.current && !ref.current.contains(event.target)) onClose()
+        }
+        const onKeyDown = (event) => {
+          if (event.key === 'Escape') {
+            event.stopPropagation()
+            onClose()
+          }
+        }
+        document.addEventListener('mousedown', onPointerDown, true)
+        document.addEventListener('keydown', onKeyDown, true)
+        return () => {
+          document.removeEventListener('mousedown', onPointerDown, true)
+          document.removeEventListener('keydown', onKeyDown, true)
+        }
+      }, [onClose])
+
+      const width = 232
+      const height = Math.min(menu.items.length * 30 + 16, 340)
+      const left = Math.max(8, Math.min(menu.x, window.innerWidth - width - 8))
+      const top = Math.max(8, Math.min(menu.y, window.innerHeight - height - 8))
+
+      return ReactDOM.createPortal(
+        h(
+          'div',
+          {
+            className: 'gv-menu',
+            role: 'menu',
+            'aria-label': t('commitActions'),
+            ref,
+            style: { left: `${left}px`, top: `${top}px`, minWidth: `${width}px` },
+            onMouseDown: (event) => event.stopPropagation(),
+          },
+          menu.items.map((item, index) =>
+            item.separator
+              ? h('div', { key: `sep-${index}`, className: 'gv-menu-sep', role: 'separator' })
+              : h(
+                  'button',
+                  {
+                    key: item.id || `item-${index}`,
+                    type: 'button',
+                    role: 'menuitem',
+                    className: `gv-menu-item${item.danger ? ' gv-menu-danger' : ''}`,
+                    disabled: item.disabled,
+                    title: item.hint || item.label,
+                    onClick: () => {
+                      onClose()
+                      item.onSelect()
+                    },
+                  },
+                  h('span', { className: 'gv-menu-label' }, item.label),
+                  item.hint ? h('span', { className: 'gv-menu-hint' }, item.hint) : null,
+                ),
+          ),
+        ),
+        document.body,
+      )
+    }
+
+    /**
+     * Multi-file rollback dialog (IDEA's Rollback): pick the files to restore and
+     * decide whether newly added files are deleted from disk or only unstaged.
+     * @param {object} props - entries, busy/error state, callbacks.
+     * @returns {import('react').ReactElement} the portal.
+     */
+    function RollbackDialog({ t, entries, busy, error, onClose, onConfirm }) {
+      const [checked, setChecked] = useState(() => new Set(entries.map((entry) => entry.path)))
+      const [deleteAdded, setDeleteAdded] = useState(true)
+      const confirmRef = useRef(null)
+
+      useEffect(() => {
+        if (confirmRef.current && typeof confirmRef.current.focus === 'function') confirmRef.current.focus()
+        const onKeyDown = (event) => {
+          if (event.key === 'Escape' && !busy) {
+            event.stopPropagation()
+            onClose()
+          }
+        }
+        const previous = document.documentElement.style.overflow
+        document.documentElement.style.overflow = 'hidden'
+        document.addEventListener('keydown', onKeyDown, true)
+        return () => {
+          document.removeEventListener('keydown', onKeyDown, true)
+          document.documentElement.style.overflow = previous
+        }
+      }, [busy, onClose])
+
+      const toggle = (path) => {
+        setChecked((previous) => {
+          const next = new Set(previous)
+          if (next.has(path)) next.delete(path)
+          else next.add(path)
+          return next
+        })
+      }
+      const allChecked = entries.length > 0 && checked.size === entries.length
+      const paths = entries.filter((entry) => checked.has(entry.path)).map((entry) => entry.path)
+
+      return ReactDOM.createPortal(
+        h(
+          'div',
+          {
+            className: 'gv-modal-mask gv-dialog-mask',
+            onMouseDown: (event) => {
+              if (event.target === event.currentTarget && !busy) onClose()
+            },
+          },
+          h(
+            'div',
+            { className: 'gv-dialog gv-dialog-wide', role: 'dialog', 'aria-modal': 'true', 'aria-label': t('rollbackTitle') },
+            h(
+              'div',
+              { className: 'gv-dialog-head' },
+              h('span', { className: 'gv-dialog-title' }, t('rollbackTitle')),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'gv-icon-button gv-icon-xs',
+                  title: t('close'),
+                  'aria-label': t('close'),
+                  disabled: busy,
+                  onClick: onClose,
+                },
+                h(IconClose, { size: 13 }),
+              ),
+            ),
+            h(
+              'div',
+              { className: 'gv-dialog-body' },
+              h('p', { className: 'gv-dialog-text' }, t('rollbackHint')),
+              h(
+                'label',
+                { className: 'gv-dialog-check' },
+                h('input', {
+                  type: 'checkbox',
+                  checked: allChecked,
+                  disabled: busy || entries.length === 0,
+                  onChange: () => setChecked(allChecked ? new Set() : new Set(entries.map((entry) => entry.path))),
+                }),
+                h('span', null, `${t('selectAll')} · ${checked.size}/${entries.length}`),
+              ),
+              h(
+                'div',
+                { className: 'gv-rollback-list' },
+                entries.map((entry) =>
+                  h(
+                    'label',
+                    { key: entry.path, className: 'gv-rollback-row' },
+                    h('input', {
+                      type: 'checkbox',
+                      checked: checked.has(entry.path),
+                      disabled: busy,
+                      onChange: () => toggle(entry.path),
+                    }),
+                    h('span', { className: `gv-status ${statusClass(entry.status)}` }, entry.status || '?'),
+                    h('span', { className: 'gv-rollback-path', title: entry.path }, entry.path),
+                  ),
+                ),
+              ),
+              h(
+                'label',
+                { className: 'gv-dialog-check' },
+                h('input', {
+                  type: 'checkbox',
+                  checked: deleteAdded,
+                  disabled: busy,
+                  onChange: (event) => setDeleteAdded(event.target.checked),
+                }),
+                h('span', null, t('rollbackDeleteAdded')),
+              ),
+              error ? h('div', { className: 'gv-dialog-error' }, error) : null,
+            ),
+            h(
+              'div',
+              { className: 'gv-dialog-actions' },
+              h('button', { type: 'button', className: 'gv-button gv-button-ghost', onClick: onClose, disabled: busy }, t('cancel')),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  ref: confirmRef,
+                  className: 'gv-button gv-button-danger',
+                  disabled: busy || paths.length === 0,
+                  onClick: () => onConfirm(paths, deleteAdded),
+                },
+                busy ? h('span', { className: 'gv-inline-spin', 'aria-hidden': true }) : null,
+                h('span', null, `${t('rollbackConfirm')} · ${paths.length}`),
+              ),
+            ),
+          ),
+        ),
+        document.body,
+      )
+    }
+
+    /**
      * Bottom half of the left column: working-tree changes and the commit
      * composer. Every visible file is selected by default; unchecking a file is
      * how a partial commit (or partial AI commit) is expressed.
@@ -2485,6 +2887,7 @@ window.__ModuleLoader__.load({
         busy,
         disabled,
         aiBusy,
+        onGenerate,
         notice,
         repoNotice,
         repoState,
@@ -2493,13 +2896,14 @@ window.__ModuleLoader__.load({
         onToggle,
         onToggleAll,
         onRefresh,
+        onRollback,
         onMessage,
         onCommit,
-        onAi,
         onDiscard,
         onResolve,
         onContinue,
         onAbort,
+        inputRef,
       } = props
 
       const summary = useMemo(() => summarizeChanges(entries), [entries])
@@ -2656,6 +3060,17 @@ window.__ModuleLoader__.load({
               'button',
               {
                 type: 'button',
+                className: 'gv-text-button gv-text-button-danger',
+                title: t('rollbackHint'),
+                onClick: onRollback,
+                disabled: entries.length === 0 || locked,
+              },
+              t('rollback'),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
                 className: 'gv-icon-button gv-icon-xs',
                 title: t('refreshChanges'),
                 'aria-label': t('refreshChanges'),
@@ -2735,6 +3150,7 @@ window.__ModuleLoader__.load({
           { className: 'gv-commit' },
           h('textarea', {
             className: 'gv-commit-input',
+            ref: inputRef,
             rows: 2,
             value: message,
             placeholder: t('commitMessagePlaceholder'),
@@ -2751,32 +3167,37 @@ window.__ModuleLoader__.load({
           }),
           h(
             'div',
-            { className: 'gv-commit-actions' },
+            { className: 'gv-commit-bar' },
             h(
               'button',
               {
                 type: 'button',
-                className: 'gv-button gv-button-ai gv-commit-btn',
-                onClick: onAi,
-                disabled: !canCommit,
+                className: 'gv-commit-generate',
+                onClick: onGenerate,
+                disabled: !canCommit || aiBusy,
                 title: operationPaused
                   ? t('finishOperationFirst')
                   : selectedConflict
                     ? t('resolveConflictsFirst')
                     : selectedCount === 0
                       ? t('commitSelectRequired')
-                      : t('aiCommitHint'),
+                      : t('generateHint'),
               },
-              busy && aiBusy
+              aiBusy
                 ? h('span', { className: 'gv-inline-spin', 'aria-hidden': true })
-                : h(IconSparkles, { size: 13 }),
-              h('span', null, t('aiCommit')),
+                : h(IconSparkles, { size: 12 }),
+              h('span', null, manualReady ? t('regenerateMessage') : t('generateMessage')),
+            ),
+            h(
+              'span',
+              { className: 'gv-commit-hint' },
+              `${t('selectedFiles')} ${selectedCount} / ${entries.length}`,
             ),
             h(
               'button',
               {
                 type: 'button',
-                className: 'gv-button gv-button-primary gv-commit-btn',
+                className: 'gv-button gv-button-primary gv-commit-submit',
                 onClick: onCommit,
                 disabled: !canSubmit,
                 title: operationPaused
@@ -2790,21 +3211,13 @@ window.__ModuleLoader__.load({
                         : t('commitKeyHint'),
               },
               h('span', null, t('commit')),
-              h('span', { className: 'gv-commit-count' }, String(selectedCount)),
             ),
           ),
-          h(
-            'div',
-            { className: 'gv-commit-meta' },
-            h('span', null, `${t('selectedFiles')} ${selectedCount} / ${entries.length}`),
-            h('span', { className: 'gv-spacer' }),
-            h('span', { className: 'gv-commit-keyhint' }, t('commitKeyHint')),
-          ),
-          busy || disabled
+          busy || aiBusy
             ? h(
                 'div',
                 { className: 'gv-commit-note' },
-                busy ? t(aiBusy ? 'aiWorking' : 'committing') : t('working'),
+                busy ? t(aiBusy ? 'aiWorking' : 'committing') : t('aiWorking'),
               )
             : null,
           notice ? h('div', { className: 'gv-commit-note gv-commit-ok' }, notice) : null,
@@ -2985,6 +3398,7 @@ window.__ModuleLoader__.load({
       const treeGeneration = useRef(0)
       const treeChildrenRef = useRef({})
       const treeLoadingRef = useRef(new Set())
+      const lastTreeRefresh = useRef(0)
 
       const [changes, setChanges] = useState(null)
       const [changesError, setChangesError] = useState('')
@@ -2992,6 +3406,11 @@ window.__ModuleLoader__.load({
       const [changesTick, setChangesTick] = useState(0)
       const [deselectedChanges, setDeselectedChanges] = useState(() => new Set())
       const [commitMessage, setCommitMessage] = useState('')
+      const messageRef = useRef(null)
+      const [rollbackOpen, setRollbackOpen] = useState(false)
+      const [rollbackBusy, setRollbackBusy] = useState(false)
+      const [rollbackError, setRollbackError] = useState('')
+      const [commitMenu, setCommitMenu] = useState(null)
       const [commitBusy, setCommitBusy] = useState(false)
       const [commitAiBusy, setCommitAiBusy] = useState(false)
       const [commitNotice, setCommitNotice] = useState('')
@@ -3065,10 +3484,11 @@ window.__ModuleLoader__.load({
       }, [])
 
       const loadTree = useCallback(
-        async (path) => {
+        async (path, options = {}) => {
           if (!repoId) return
           if (treeLoadingRef.current.has(path)) return
-          if (path && treeChildrenRef.current[path]) return
+          const force = options.force === true
+          if (!force && path && treeChildrenRef.current[path]) return
           const generation = treeGeneration.current
           treeLoadingRef.current.add(path)
           setTreeLoading((previous) => new Set(previous).add(path))
@@ -3079,7 +3499,10 @@ window.__ModuleLoader__.load({
             return next
           })
           try {
-            const params = { repo: repoId, path }
+            // The working tree is shown by default so untracked files (and any
+            // directory created since the last commit) are visible; a branch
+            // filter switches the pane to that revision's file list.
+            const params = { repo: repoId, path, mode: refValue ? 'ref' : 'worktree' }
             if (refValue) params.ref = refValue
             const payload = await fetchJson('tree', params)
             if (generation !== treeGeneration.current) return
@@ -3101,6 +3524,15 @@ window.__ModuleLoader__.load({
         },
         [repoId, refValue],
       )
+
+      const refreshTree = useCallback(async () => {
+        if (!repoId) return
+        const paths = new Set([''])
+        for (const key of Object.keys(treeChildrenRef.current)) {
+          if (key) paths.add(key)
+        }
+        for (const path of paths) await loadTree(path, { force: true })
+      }, [repoId, loadTree])
 
       useEffect(() => {
         const controller = new AbortController()
@@ -3130,7 +3562,26 @@ window.__ModuleLoader__.load({
         resetTree()
         if (!repoId) return
         loadTree('')
-      }, [repoId, refValue, reloadTick, resetTree, loadTree])
+      }, [repoId, refValue, resetTree, loadTree])
+
+      // Manual refresh reloads the directories that are already open, keeping
+      // the expansion state instead of collapsing the tree.
+      useEffect(() => {
+        if (!repoId || reloadTick === 0) return
+        lastTreeRefresh.current = Date.now()
+        void refreshTree()
+      }, [reloadTick, repoId, refreshTree])
+
+      // The status poll (and every write) bumps changesTick; pick up new and
+      // deleted files within a few seconds without thrashing the disk.
+      useEffect(() => {
+        if (!repoId || changesTick === 0) return
+        if (document.hidden) return
+        const now = Date.now()
+        if (now - lastTreeRefresh.current < 3000) return
+        lastTreeRefresh.current = now
+        void refreshTree()
+      }, [changesTick, repoId, refreshTree])
 
       useEffect(() => {
         if (!repoId) {
@@ -3467,54 +3918,85 @@ window.__ModuleLoader__.load({
         setChangesTick((value) => value + 1)
       }, [])
 
-      const performCommit = useCallback(
-        async ({ ai }) => {
-          if (!repoId || commitBusy) return
-          if (selectedChangePaths.length === 0) {
-            setCommitError(t('commitSelectRequired'))
-            return
-          }
-          if (!ai && !commitMessage.trim()) {
-            setCommitError(t('commitMessageRequired'))
-            return
-          }
-          setCommitBusy(true)
-          setCommitAiBusy(ai)
-          setCommitError('')
-          setCommitNotice('')
-          try {
-            const payload = await postJson({
-              repo: repoId,
-              action: 'commit',
-              paths: selectedChangePaths,
-              ...(ai ? { ai: true, locale: uiLocale() } : { message: commitMessage }),
-            })
-            const suffix = payload.ai ? ` · ${payload.message}` : ''
-            setCommitNotice(`${t('commitDone')} ${payload.shortHash}${suffix}`)
-            setCommitMessage('')
-            setDeselectedChanges(new Set())
-            setSelected('')
-            setDetails(null)
-            setDetailsError('')
-            setCompare(null)
-            setReloadTick((value) => value + 1)
-            setChangesTick((value) => value + 1)
-          } catch (error) {
-            setCommitError(errorText(error))
-          } finally {
-            setCommitBusy(false)
-            setCommitAiBusy(false)
-          }
-        },
-        [repoId, commitBusy, selectedChangePaths, commitMessage, t],
-      )
+      const performCommit = useCallback(async () => {
+        if (!repoId || commitBusy) return
+        if (selectedChangePaths.length === 0) {
+          setCommitError(t('commitSelectRequired'))
+          return
+        }
+        if (!commitMessage.trim()) {
+          setCommitError(t('commitMessageRequired'))
+          return
+        }
+        setCommitBusy(true)
+        setCommitError('')
+        setCommitNotice('')
+        try {
+          const payload = await postJson({
+            repo: repoId,
+            action: 'commit',
+            paths: selectedChangePaths,
+            message: commitMessage,
+          })
+          setCommitNotice(`${t('commitDone')} ${payload.shortHash}`)
+          setCommitMessage('')
+          setDeselectedChanges(new Set())
+          setSelected('')
+          setDetails(null)
+          setDetailsError('')
+          setCompare(null)
+          setReloadTick((value) => value + 1)
+          setChangesTick((value) => value + 1)
+        } catch (error) {
+          setCommitError(errorText(error))
+        } finally {
+          setCommitBusy(false)
+        }
+      }, [repoId, commitBusy, selectedChangePaths, commitMessage, t])
+
+      /**
+       * Ask the model for a `type(scope): subject` draft and put it in the
+       * message box. Nothing is committed: the user reviews and edits it first.
+       */
+      const generateMessage = useCallback(async () => {
+        if (!repoId || commitBusy || commitAiBusy) return
+        if (selectedChangePaths.length === 0) {
+          setCommitError(t('commitSelectRequired'))
+          return
+        }
+        setCommitAiBusy(true)
+        setCommitError('')
+        setCommitNotice('')
+        try {
+          const payload = await postJson({
+            repo: repoId,
+            action: 'message',
+            paths: selectedChangePaths,
+            locale: uiLocale(),
+          })
+          const draft = typeof payload.message === 'string' ? payload.message : ''
+          setCommitMessage(draft)
+          setCommitNotice(t('messageGenerated'))
+          window.requestAnimationFrame(() => {
+            const node = messageRef.current
+            if (!node) return
+            node.focus()
+            const end = node.value.length
+            try {
+              node.setSelectionRange(end, end)
+            } catch {
+              /* some input types reject ranges */
+            }
+          })
+        } catch (error) {
+          setCommitError(errorText(error))
+        } finally {
+          setCommitAiBusy(false)
+        }
+      }, [repoId, commitBusy, commitAiBusy, selectedChangePaths, t])
 
       const commitSelected = useCallback(() => {
-        performCommit({ ai: false })
-      }, [performCommit])
-
-      const commitAi = useCallback(() => {
-        performCommit({ ai: true })
+        void performCommit()
       }, [performCommit])
 
       const showRepoNotice = useCallback((text, kind = 'ok') => {
@@ -3627,6 +4109,84 @@ window.__ModuleLoader__.load({
         [t],
       )
 
+      const executeRollback = useCallback(
+        async (paths, deleteAdded) => {
+          if (!repoId || rollbackBusy) return
+          setRollbackBusy(true)
+          setRollbackError('')
+          try {
+            await postJson({ repo: repoId, action: 'rollback', paths, deleteAdded })
+            setRollbackOpen(false)
+            setCommitError('')
+            setDeselectedChanges(new Set())
+            showRepoNotice(`${t('rollbackDone')} · ${paths.length}`)
+            setChangesTick((value) => value + 1)
+            setReloadTick((value) => value + 1)
+          } catch (error) {
+            setRollbackError(errorText(error))
+          } finally {
+            setRollbackBusy(false)
+          }
+        },
+        [repoId, rollbackBusy, t, showRepoNotice],
+      )
+
+      /**
+       * Run one commit-level action from the details pane.
+       * @param {string} op - undo, revert, cherryPick, or checkout.
+       * @returns {Promise<void>}
+       */
+      const executeHistoryOp = useCallback(
+        async (op, hashArg) => {
+          if (!repoId || actionBusy) return
+          const hash = hashArg || (details && details.hash ? details.hash : '')
+          setActionBusy(true)
+          setActionError('')
+          try {
+            const result = await postJson({ repo: repoId, action: 'history', op, ...(hash ? { hash } : {}) })
+            setActionDialog(null)
+            showRepoNotice(`${t('historyDone')} · ${t(historyLabelKey(op))}`)
+            setSelected('')
+            setDetails(null)
+            setDetailsError('')
+            refresh()
+            setChangesTick((value) => value + 1)
+            return result
+          } catch (error) {
+            if (error && (error.conflict || (error.state && error.state.operation))) {
+              showRepoNotice(errorText(error), 'error')
+              setActionDialog(null)
+            } else {
+              setActionError(errorText(error))
+            }
+            refresh()
+            setChangesTick((value) => value + 1)
+            return null
+          } finally {
+            setActionBusy(false)
+          }
+        },
+        [repoId, actionBusy, details, t, showRepoNotice, refresh],
+      )
+
+      const requestHistoryOp = useCallback(
+        (op, hashArg) => {
+          const hash = hashArg || (details && details.hash ? details.hash : '')
+          if (op !== 'undo' && !hash) return
+          setActionError('')
+          setActionDialog({
+            kind: 'history',
+            op,
+            payload: hash ? { hash } : {},
+            title: t(historyLabelKey(op)),
+            description: t(historyHintKey(op)),
+            confirmLabel: t(historyLabelKey(op)),
+            danger: op === 'undo' || op === 'checkout',
+          })
+        },
+        [details, t],
+      )
+
       const requestAbortOperation = useCallback(() => {
         setActionError('')
         setActionDialog({
@@ -3639,6 +4199,73 @@ window.__ModuleLoader__.load({
         })
       }, [t])
 
+      /**
+       * Menu for one commit row. Items depend on the commit itself: the checked
+       * out commit cannot be checked out or cherry-picked again, merge commits
+       * cannot be reverted here, and "Undo" only exists for HEAD.
+       * @param {object} commit - commit row payload.
+       * @returns {Array<object>} menu items.
+       */
+      const buildCommitMenu = useCallback(
+        (commit) => {
+          const head = log && log.head ? log.head.hash : ''
+          const isHead = Boolean(head) && commit.hash === head
+          const isMerge = Array.isArray(commit.parents) && commit.parents.length > 1
+          const items = [
+            { id: 'copy-hash', label: t('copyHash'), hint: commit.hash.slice(0, 7), onSelect: () => void copyHash(commit.hash) },
+            {
+              id: 'copy-subject',
+              label: t('copyCommitMessage'),
+              onSelect: () => {
+                try {
+                  void navigator.clipboard.writeText(commit.subject || '')
+                } catch {
+                  /* clipboard permission denied */
+                }
+              },
+            },
+            { separator: true },
+          ]
+          if (!isHead) {
+            items.push({
+              id: 'checkout',
+              label: t('checkoutCommit'),
+              onSelect: () => requestHistoryOp('checkout', commit.hash),
+            })
+            if (!isMerge) {
+              items.push({
+                id: 'cherryPick',
+                label: t('cherryPickCommit'),
+                onSelect: () => requestHistoryOp('cherryPick', commit.hash),
+              })
+            }
+          }
+          if (!isMerge) {
+            items.push({
+              id: 'revert',
+              label: t('revertCommit'),
+              onSelect: () => requestHistoryOp('revert', commit.hash),
+            })
+          }
+          if (isHead) {
+            items.push({ separator: true })
+            items.push({
+              id: 'undo',
+              label: t('undoCommit'),
+              danger: true,
+              onSelect: () => requestHistoryOp('undo', commit.hash),
+            })
+          }
+          return items
+        },
+        [log, t, copyHash, requestHistoryOp],
+      )
+
+      const openCommitMenu = useCallback((commit, point) => {
+        setSelected(commit.hash)
+        setCommitMenu({ commit, x: point.x, y: point.y })
+      }, [])
+
       const continueBranchOperation = useCallback(() => {
         void executeBranchOp('continue', {})
       }, [executeBranchOp])
@@ -3649,6 +4276,10 @@ window.__ModuleLoader__.load({
           if (!dialog || actionBusy) return
           if (dialog.kind === 'discard') {
             void executeDiscard(dialog.entry)
+            return
+          }
+          if (dialog.kind === 'history') {
+            void executeHistoryOp(dialog.op)
             return
           }
           const payload = { ...dialog.payload }
@@ -3669,7 +4300,7 @@ window.__ModuleLoader__.load({
           if (dialog.op === 'delete') payload.force = Boolean(checked)
           void executeBranchOp(dialog.op, payload)
         },
-        [actionDialog, actionBusy, executeBranchOp, executeDiscard, t],
+        [actionDialog, actionBusy, executeBranchOp, executeDiscard, executeHistoryOp, t],
       )
 
       const closeActionDialog = useCallback(() => {
@@ -3684,168 +4315,206 @@ window.__ModuleLoader__.load({
       }, [log, refValue])
       const branchState = log && log.state ? log.state : null
 
-      const branchMenuItems = useMemo(() => {
-        const items = []
-        const entry = refEntry
-        const current = branchState && branchState.branch ? branchState.branch : ''
-        const entryName = entry
-          ? entry.kind === 'tag'
-            ? `${entry.name}${t('tagSuffix')}`
-            : entry.name
-          : ''
-        const open = (config) => () => {
-          setActionError('')
-          setActionDialog(config)
-        }
+      /**
+       * Actions for one branch row in the ref dropdown: browse (single click)
+       * stays separate from acting on the branch (the row's "…" button).
+       * @param {object|null} entry - ref catalogue entry, or null for "all refs".
+       * @returns {Array<object>} menu items.
+       */
+      const buildBranchMenu = useCallback(
+        (entry) => {
+          const items = []
+          const current = branchState && branchState.branch ? branchState.branch : ''
+          const entryName = entry
+            ? entry.kind === 'tag'
+              ? `${entry.name}${t('tagSuffix')}`
+              : entry.name
+            : ''
+          const open = (config) => () => {
+            setActionError('')
+            setActionDialog(config)
+          }
 
-        if (entry && entry.kind === 'branch' && !entry.head) {
-          items.push({
-            id: 'checkout',
-            label: t('checkoutBranch'),
-            hint: entry.name,
-            onSelect: open({
-              kind: 'branch',
-              op: 'checkout',
-              title: t('checkoutBranch'),
-              description: `${t('checkoutBranch')} · ${entry.name}`,
-              confirmLabel: t('checkoutBranch'),
-              payload: { branch: entry.name },
-            }),
-          })
-        }
-        if (entry && entry.kind === 'remote') {
-          items.push({
-            id: 'checkout-remote',
-            label: t('checkoutRemote'),
-            hint: entry.name,
-            onSelect: open({
-              kind: 'branch',
-              op: 'create',
-              title: t('checkoutRemote'),
-              description: entry.name,
-              input: true,
-              label: t('branchName'),
-              initialValue: localNameForRemote(entry.name),
-              placeholder: t('branchName'),
-              confirmLabel: t('checkoutBranch'),
-              checkboxLabel: t('checkoutAfterCreate'),
-              checkboxDefault: true,
-              payload: { startRef: entry.ref },
-            }),
-          })
-        }
-        items.push({
-          id: 'create',
-          label: t('createBranch'),
-          hint: entryName || t('head'),
-          onSelect: open({
-            kind: 'branch',
-            op: 'create',
-            title: t('createBranch'),
-            description: entry ? `${t('createBranch')} · ${entryName}` : t('createBranch'),
-            input: true,
-            label: t('branchName'),
-            initialValue: '',
-            placeholder: t('branchName'),
-            confirmLabel: t('createBranch'),
-            checkboxLabel: t('checkoutAfterCreate'),
-            checkboxDefault: true,
-            payload: entry ? { startRef: entry.ref } : {},
-          }),
-        })
-        if (entry && entry.kind === 'branch') {
-          items.push({
-            id: 'rename',
-            label: t('renameBranch'),
-            hint: entry.name,
-            onSelect: open({
-              kind: 'branch',
-              op: 'rename',
-              title: `${t('renameBranch')} · ${entry.name}`,
-              description: `${t('renameBranch')} ${entry.name}`,
-              input: true,
-              label: t('newBranchName'),
-              initialValue: entry.name,
-              placeholder: t('newBranchName'),
-              confirmLabel: t('confirm'),
-              payload: { branch: entry.name },
-            }),
-          })
-        }
-        if (entry && entry.kind === 'branch' && !entry.head) {
-          items.push({
-            id: 'delete',
-            label: t('deleteBranch'),
-            hint: entry.name,
-            danger: true,
-            onSelect: open({
-              kind: 'branch',
-              op: 'delete',
-              title: `${t('deleteBranch')} · ${entry.name}`,
-              description: `${t('deleteBranch')} ${entry.name}`,
-              danger: true,
-              confirmLabel: t('deleteBranch'),
-              checkboxLabel: t('forceDelete'),
-              checkboxDefault: false,
-              payload: { branch: entry.name },
-            }),
-          })
-        }
-        if (entry && current && entry.name !== current) {
-          items.push({
-            id: 'merge',
-            label: t('mergeBranch'),
-            hint: `${entryName} → ${current}`,
-            onSelect: open({
-              kind: 'branch',
-              op: 'merge',
-              title: t('mergeBranch'),
-              description: `${t('mergeBranch')} · ${entryName} → ${current}`,
-              confirmLabel: t('mergeBranch'),
-              payload: { ref: entry.ref },
-            }),
-          })
-          items.push({
-            id: 'rebase',
-            label: t('rebaseBranch'),
-            hint: `${current} → ${entryName}`,
-            onSelect: open({
-              kind: 'branch',
-              op: 'rebase',
-              title: t('rebaseBranch'),
-              description: `${t('rebaseBranch')} · ${current} → ${entryName}`,
-              confirmLabel: t('rebaseBranch'),
-              payload: { ref: entry.ref },
-            }),
-          })
-        }
-        if (branchState && branchState.operation) {
-          items.push({ separator: true })
-          if (branchState.operation !== 'bisect') {
+          if (entry && refValue !== entry.ref) {
             items.push({
-              id: 'continue',
-              label: `${t('continueOperation')} · ${operationLabel(branchState.operation, t)}`,
-              onSelect: () => {
-                void executeBranchOp('continue', {})
-              },
+              id: 'history',
+              label: t('showHistory'),
+              hint: entryName,
+              onSelect: () => setRefValue(entry.ref),
+            })
+            items.push({ separator: true })
+          }
+          if (entry && entry.kind === 'branch' && !entry.head) {
+            items.push({
+              id: 'checkout',
+              label: t('checkoutBranch'),
+              hint: entry.name,
+              onSelect: open({
+                kind: 'branch',
+                op: 'checkout',
+                title: t('checkoutBranch'),
+                description: `${t('checkoutBranch')} · ${entry.name}`,
+                confirmLabel: t('checkoutBranch'),
+                payload: { branch: entry.name },
+              }),
+            })
+          }
+          if (entry && entry.kind === 'remote') {
+            items.push({
+              id: 'checkout-remote',
+              label: t('checkoutRemote'),
+              hint: entry.name,
+              onSelect: open({
+                kind: 'branch',
+                op: 'create',
+                title: t('checkoutRemote'),
+                description: entry.name,
+                input: true,
+                label: t('branchName'),
+                initialValue: localNameForRemote(entry.name),
+                placeholder: t('branchName'),
+                confirmLabel: t('checkoutBranch'),
+                checkboxLabel: t('checkoutAfterCreate'),
+                checkboxDefault: true,
+                payload: { startRef: entry.ref },
+              }),
             })
           }
           items.push({
-            id: 'abort',
-            label: `${t('abortOperation')} · ${operationLabel(branchState.operation, t)}`,
-            danger: true,
+            id: 'create',
+            label: t('createBranch'),
+            hint: entryName || t('head'),
             onSelect: open({
               kind: 'branch',
-              op: 'abort',
-              title: t('abortOperation'),
-              description: t('branchAbortConfirm'),
-              confirmLabel: t('abortOperation'),
-              danger: true,
+              op: 'create',
+              title: t('createBranch'),
+              description: entry ? `${t('createBranch')} · ${entryName}` : t('createBranch'),
+              input: true,
+              label: t('branchName'),
+              initialValue: '',
+              placeholder: t('branchName'),
+              confirmLabel: t('createBranch'),
+              checkboxLabel: t('checkoutAfterCreate'),
+              checkboxDefault: true,
+              payload: entry ? { startRef: entry.ref } : {},
             }),
           })
+          if (entry && entry.kind === 'branch') {
+            items.push({
+              id: 'rename',
+              label: t('renameBranch'),
+              hint: entry.name,
+              onSelect: open({
+                kind: 'branch',
+                op: 'rename',
+                title: `${t('renameBranch')} · ${entry.name}`,
+                description: `${t('renameBranch')} ${entry.name}`,
+                input: true,
+                label: t('newBranchName'),
+                initialValue: entry.name,
+                placeholder: t('newBranchName'),
+                confirmLabel: t('confirm'),
+                payload: { branch: entry.name },
+              }),
+            })
+          }
+          if (entry && entry.kind === 'branch' && !entry.head) {
+            items.push({
+              id: 'delete',
+              label: t('deleteBranch'),
+              hint: entry.name,
+              danger: true,
+              onSelect: open({
+                kind: 'branch',
+                op: 'delete',
+                title: `${t('deleteBranch')} · ${entry.name}`,
+                description: `${t('deleteBranch')} ${entry.name}`,
+                danger: true,
+                confirmLabel: t('deleteBranch'),
+                checkboxLabel: t('forceDelete'),
+                checkboxDefault: false,
+                payload: { branch: entry.name },
+              }),
+            })
+          }
+          if (entry && current && entry.kind !== 'tag' && entry.name !== current) {
+            items.push({ separator: true })
+            items.push({
+              id: 'merge',
+              label: t('mergeBranch'),
+              hint: `${entryName} → ${current}`,
+              onSelect: open({
+                kind: 'branch',
+                op: 'merge',
+                title: t('mergeBranch'),
+                description: `${t('mergeBranch')} · ${entryName} → ${current}`,
+                confirmLabel: t('mergeBranch'),
+                payload: { ref: entry.ref },
+              }),
+            })
+            items.push({
+              id: 'rebase',
+              label: t('rebaseBranch'),
+              hint: `${current} → ${entryName}`,
+              onSelect: open({
+                kind: 'branch',
+                op: 'rebase',
+                title: t('rebaseBranch'),
+                description: `${t('rebaseBranch')} · ${current} → ${entryName}`,
+                confirmLabel: t('rebaseBranch'),
+                payload: { ref: entry.ref },
+              }),
+            })
+          }
+          if (branchState && branchState.operation) {
+            items.push({ separator: true })
+            if (branchState.operation !== 'bisect') {
+              items.push({
+                id: 'continue',
+                label: `${t('continueOperation')} · ${operationLabel(branchState.operation, t)}`,
+                onSelect: () => {
+                  void executeBranchOp('continue', {})
+                },
+              })
+            }
+            items.push({
+              id: 'abort',
+              label: `${t('abortOperation')} · ${operationLabel(branchState.operation, t)}`,
+              danger: true,
+              onSelect: open({
+                kind: 'branch',
+                op: 'abort',
+                title: t('abortOperation'),
+                description: t('branchAbortConfirm'),
+                confirmLabel: t('abortOperation'),
+                danger: true,
+              }),
+            })
+          }
+          return items
+        },
+        [branchState, t, executeBranchOp, refValue],
+      )
+
+      const branchOptions = useMemo(() => {
+        const options = [{ value: '', label: t('allRefs'), icon: 'all', actions: buildBranchMenu(null) }]
+        for (const entry of log && Array.isArray(log.refs) ? log.refs : []) {
+          options.push({
+            value: entry.ref,
+            label: `${entry.name}${entry.kind === 'tag' ? t('tagSuffix') : ''}`,
+            group:
+              entry.kind === 'branch'
+                ? t('localBranches')
+                : entry.kind === 'remote'
+                  ? t('remoteBranches')
+                  : t('tags'),
+            icon: entry.kind,
+            head: entry.head,
+            actions: buildBranchMenu(entry),
+          })
         }
-        return items
-      }, [refEntry, branchState, t, executeBranchOp])
+        return options
+      }, [log, t, buildBranchMenu])
 
       const treePane = h(
         'div',
@@ -3857,6 +4526,11 @@ window.__ModuleLoader__.load({
             t,
             repo,
             scope,
+            refName: refEntry
+              ? refEntry.name
+              : refValue
+                ? refValue.replace(/^refs\/(heads|remotes|tags)\//, '')
+                : '',
             children: treeChildren,
             expanded: treeExpanded,
             loading: treeLoading,
@@ -3901,9 +4575,13 @@ window.__ModuleLoader__.load({
             onToggle: toggleChange,
             onToggleAll: toggleAllChanges,
             onRefresh: refreshChanges,
+            onRollback: () => {
+              setRollbackError('')
+              setRollbackOpen(true)
+            },
             onMessage: setCommitMessage,
             onCommit: commitSelected,
-            onAi: commitAi,
+            onGenerate: generateMessage,
             onDiscard: requestDiscard,
             onResolve: resolveConflict,
             onContinue: continueBranchOperation,
@@ -3929,9 +4607,22 @@ window.__ModuleLoader__.load({
               scope,
               state: branchState,
               narrow: narrowCenter,
+              inputRef: messageRef,
               onSelect: chooseCommit,
               onRefresh: refresh,
               onClearScope: () => applyScope(''),
+              onMenu: openCommitMenu,
+              onContinue: () => executeBranchOp('continue', {}),
+              onAbort: () =>
+                setActionDialog({
+                  kind: 'branch',
+                  op: 'abort',
+                  title: t('abortOperation'),
+                  description: t('branchAbortConfirm'),
+                  confirmLabel: t('abortOperation'),
+                  danger: true,
+                }),
+              busy: actionBusy,
             })
           : null,
       )
@@ -3950,9 +4641,11 @@ window.__ModuleLoader__.load({
           error: detailsError,
           copied,
           scope,
+          headHash: log && log.head ? log.head.hash : '',
           onCopy: copyHash,
           onCompare: openCompare,
           onSelectHash: chooseCommit,
+          onHistory: requestHistoryOp,
         }),
       )
 
@@ -4032,8 +4725,7 @@ window.__ModuleLoader__.load({
           log,
           refValue,
           onRef: changeRef,
-          branchItems: branchMenuItems,
-          branchBusy: actionBusy,
+          branchOptions,
           query,
           onQuery: setQuery,
           count: log ? commits.length : 0,
@@ -4091,6 +4783,33 @@ window.__ModuleLoader__.load({
               onConfirm: confirmAction,
             })
           : null,
+        rollbackOpen
+          ? h(RollbackDialog, {
+              t,
+              entries: visibleChanges,
+              busy: rollbackBusy,
+              error: rollbackError,
+              onClose: () => {
+                if (rollbackBusy) return
+                setRollbackOpen(false)
+                setRollbackError('')
+              },
+              onConfirm: (paths, deleteAdded) => {
+                void executeRollback(paths, deleteAdded)
+              },
+            })
+          : null,
+        commitMenu
+          ? h(PopupMenu, {
+              t,
+              menu: {
+                x: commitMenu.x,
+                y: commitMenu.y,
+                items: buildCommitMenu(commitMenu.commit),
+              },
+              onClose: () => setCommitMenu(null),
+            })
+          : null,
       )
     }
 
@@ -4112,11 +4831,26 @@ window.__ModuleLoader__.load({
 .gv-dropdown-menu{position:absolute;top:calc(100% + 6px);left:0;z-index:40;min-width:100%;width:max-content;max-width:min(340px,calc(100vw - 24px));max-height:320px;overflow:auto;padding:5px;background:var(--dsw-alias-bg-overlay);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:0 16px 40px rgba(0,0,0,.22);animation:gv-pop .12s ease-out}
 @keyframes gv-pop{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
 .gv-dropdown-group{padding:6px 8px 4px;font-size:10px;font-weight:600;letter-spacing:.02em;color:var(--dsw-alias-label-secondary)}
-.gv-dropdown-option{display:flex;align-items:center;gap:8px;min-height:30px;padding:5px 8px;border-radius:7px;cursor:pointer;font-size:12px;color:var(--dsw-alias-label-primary)}
+.gv-dropdown-option{position:relative;display:flex;align-items:center;gap:8px;min-height:30px;padding:5px 8px;border-radius:7px;cursor:pointer;font-size:12px;color:var(--dsw-alias-label-primary)}
 .gv-dropdown-option:hover,.gv-dropdown-active{background:var(--dsw-alias-bg-layer-2)}
 .gv-dropdown-selected{background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent)}
 .gv-opt-icon{display:inline-flex;flex:none;color:var(--dsw-alias-label-secondary)}
 .gv-opt-text{display:flex;flex-direction:column;min-width:0;flex:1}
+.gv-opt-action{flex:none;margin-left:auto;display:flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;border-radius:5px;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;opacity:.45}
+.gv-dropdown-option:hover .gv-opt-action,.gv-opt-action:focus-visible,.gv-opt-action-open{opacity:1}
+.gv-opt-action:hover,.gv-opt-action-open{background:color-mix(in srgb,var(--dsw-alias-label-primary) 10%,transparent);color:var(--dsw-alias-label-primary)}
+.gv-opt-menu{position:fixed;left:0;top:0;z-index:60;min-width:232px;max-height:320px;overflow:auto;padding:5px;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dsw-alias-bg-overlay);box-shadow:0 12px 28px rgba(0,0,0,.24);animation:gv-pop .1s ease-out}
+.gv-opt-menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:5px 7px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}
+.gv-opt-menu-item:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent)}
+.gv-opt-menu-item:disabled{opacity:.45;cursor:default}
+.gv-opt-menu-label{flex:none;white-space:nowrap}
+.gv-opt-menu-hint{margin-left:auto;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:11px}
+.gv-opt-menu-sep{height:1px;margin:4px 3px;background:var(--dsw-alias-border-l1)}
+.gv-status-actions{display:flex;align-items:center;gap:6px;flex:none}
+.gv-status-btn{height:18px;padding:0 7px;border:1px solid var(--dsw-alias-border-l2);border-radius:5px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;cursor:pointer}
+.gv-status-btn:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-label-primary) 8%,transparent)}
+.gv-status-btn:disabled{opacity:.45;cursor:default}
+.gv-status-btn-danger{color:var(--dsw-alias-state-error-primary);border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary) 45%,transparent)}
 .gv-opt-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gv-opt-desc{font-size:10.5px;color:var(--dsw-alias-label-secondary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:ltr}
 .gv-opt-check{display:inline-flex;flex:none;color:var(--dsw-alias-brand-primary)}
@@ -4175,6 +4909,13 @@ window.__ModuleLoader__.load({
 .gv-changes-total{font-size:10px;font-weight:400;color:var(--dsw-alias-label-secondary)}
 .gv-changes-actions{display:flex;align-items:center;gap:2px;flex:none}
 .gv-text-button{height:22px;padding:0 6px;border:0;border-radius:4px;background:transparent;color:var(--dsw-alias-brand-primary);font:inherit;font-size:10.5px;font-weight:500;cursor:pointer}
+.gv-text-button:disabled{opacity:.45;cursor:default}
+.gv-text-button-danger{color:var(--dsw-alias-state-error-primary)}
+.gv-detail-actions{display:flex;flex-wrap:wrap;gap:4px;padding:2px 0 6px;border-bottom:1px solid var(--dsw-alias-border-l1);margin-bottom:2px}
+.gv-rollback-list{flex:1;min-height:90px;max-height:34vh;overflow:auto;display:flex;flex-direction:column;gap:1px;padding:4px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1)}
+.gv-rollback-row{display:flex;align-items:center;gap:7px;padding:3px 5px;border-radius:5px;cursor:pointer;font-size:11.5px}
+.gv-rollback-row:hover{background:var(--dsw-alias-bg-layer-2)}
+.gv-rollback-path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:ltr;text-align:left}
 .gv-text-button:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-brand-primary) 12%,transparent)}
 .gv-text-button:disabled{opacity:.45;cursor:default}
 .gv-icon-xs{width:22px;height:22px;border-radius:5px}
@@ -4227,11 +4968,16 @@ window.__ModuleLoader__.load({
 .gv-commit-input{width:100%;min-height:46px;max-height:72px;resize:none;padding:6px 8px;border:1px solid var(--dsw-alias-border-l1);border-radius:7px;background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary);font:inherit;font-size:11.5px;line-height:1.45;outline:none}
 .gv-commit-input:focus{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--dsw-alias-brand-primary) 20%,transparent)}
 .gv-commit-input::placeholder{color:var(--dsw-alias-label-secondary);opacity:.8}
-.gv-commit-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px}
-.gv-commit-btn{width:100%;min-width:0;padding:0 8px;overflow:hidden}
-.gv-commit-count{display:inline-flex;align-items:center;justify-content:center;min-width:15px;height:15px;padding:0 4px;border-radius:7px;background:rgba(255,255,255,.22);font-size:9px;font-weight:700}
-.gv-commit-meta{display:flex;align-items:center;gap:6px;font-size:9.5px;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden}
-.gv-commit-keyhint{overflow:hidden;text-overflow:ellipsis}
+.gv-commit-bar{display:flex;align-items:center;gap:8px}
+.gv-commit-generate{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 9px;border:1px solid var(--dsw-alias-border-l1);border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:11px;cursor:pointer;white-space:nowrap}
+.gv-commit-generate:hover:not(:disabled){background:color-mix(in srgb,var(--dsw-alias-brand-primary) 9%,transparent);border-color:color-mix(in srgb,var(--dsw-alias-brand-primary) 28%,var(--dsw-alias-border-l1))}
+.gv-commit-generate:disabled{opacity:.45;cursor:default}
+.gv-commit-hint{margin-left:auto;font-size:10px;color:var(--dsw-alias-label-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gv-commit-submit{height:26px;min-width:88px;padding:0 14px;font-size:11.5px;border-radius:7px}
+.gv-action-chip{display:inline-flex;align-items:center;height:22px;padding:0 9px;border:1px solid var(--dsw-alias-border-l1);border-radius:11px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:10.5px;cursor:pointer;white-space:nowrap}
+.gv-action-chip:hover{background:var(--dsw-alias-bg-layer-2);border-color:var(--dsw-alias-border-l2)}
+.gv-action-chip-danger{color:var(--dsw-alias-state-error-primary);border-color:color-mix(in srgb,var(--dsw-alias-state-error-primary) 35%,var(--dsw-alias-border-l1))}
+.gv-action-chip-danger:hover{background:color-mix(in srgb,var(--dsw-alias-state-error-primary) 10%,transparent)}
 .gv-commit-note{font-size:10px;line-height:1.45;color:var(--dsw-alias-label-secondary);overflow-wrap:anywhere}
 .gv-commit-ok{color:var(--dsw-alias-state-success-primary)}
 .gv-commit-error{color:var(--dsw-alias-state-error-primary)}
@@ -4259,7 +5005,18 @@ window.__ModuleLoader__.load({
 .gv-scroll{flex:1;min-height:0;overflow:auto;position:relative;scrollbar-gutter:stable}
 .gv-thead,.gv-row{display:grid;grid-template-columns:var(--gv-cols);align-items:center;column-gap:10px;padding:0 12px}
 .gv-thead{position:sticky;top:0;z-index:3;height:27px;background:var(--dsw-alias-bg-base);border-bottom:1px solid var(--dsw-alias-border-l1);font-size:11px;font-weight:500;color:var(--dsw-alias-label-secondary)}
-.gv-row{height:${ROW_HEIGHT}px;cursor:pointer;border-bottom:1px solid transparent;outline:none}
+.gv-row{height:${ROW_HEIGHT}px;cursor:pointer;border-bottom:1px solid transparent;outline:none;position:relative}
+.gv-row-more{position:absolute;right:4px;top:50%;transform:translateY(-50%);display:flex;align-items:center;justify-content:center;width:20px;height:20px;padding:0;border:0;border-radius:5px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-secondary);cursor:pointer;opacity:0;transition:opacity .1s}
+.gv-row:hover .gv-row-more,.gv-row-more:focus-visible{opacity:1}
+.gv-row-more:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary)}
+.gv-menu{position:fixed;z-index:70;padding:5px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:var(--dsw-alias-bg-overlay);box-shadow:0 16px 40px rgba(0,0,0,.28);animation:gv-pop .1s ease-out}
+.gv-menu-item{display:flex;align-items:center;gap:8px;width:100%;padding:6px 8px;border:0;border-radius:7px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;text-align:left;cursor:pointer}
+.gv-menu-item:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2)}
+.gv-menu-item:disabled{opacity:.4;cursor:default}
+.gv-menu-danger{color:var(--dsw-alias-state-error-primary)}
+.gv-menu-label{flex:none;white-space:nowrap}
+.gv-menu-hint{margin-left:auto;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-secondary);font-size:10.5px}
+.gv-menu-sep{height:1px;margin:4px 4px;background:var(--dsw-alias-border-l1)}
 .gv-row:hover{background:var(--dsw-alias-bg-layer-2)}
 .gv-row-selected{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 13%, transparent)}
 .gv-row-selected:hover{background:color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent)}
@@ -4309,6 +5066,15 @@ window.__ModuleLoader__.load({
 .gv-chevron-space{width:16px;flex:none}
 .gv-tree-name{overflow:hidden;text-overflow:ellipsis}
 .gv-tree-spinner{width:10px;height:10px;border:1.5px solid var(--dsw-alias-border-l2);border-top-color:var(--dsw-alias-brand-primary);border-radius:50%;animation:gv-spin .8s linear infinite;flex:none;margin-left:auto}
+.gv-tree-refmode{color:var(--dsw-alias-brand-primary)}
+.gv-tree-status{font:600 9px/1 ui-monospace,SFMono-Regular,Menlo,monospace;padding:1px 3px;border-radius:3px;flex:none;margin-left:4px;letter-spacing:.02em}
+.gv-tone-modified{color:var(--dsw-alias-state-warn-primary)}
+.gv-tone-untracked{color:var(--dsw-alias-state-success-primary)}
+.gv-tone-added{color:var(--dsw-alias-state-success-primary)}
+.gv-tone-deleted{color:var(--dsw-alias-state-error-primary)}
+.gv-tone-conflict{color:var(--dsw-alias-state-error-primary)}
+.gv-tone-staged{color:var(--dsw-alias-brand-primary)}
+.gv-tree-dirty{width:5px;height:5px;border-radius:50%;background:var(--dsw-alias-state-warn-primary);flex:none;margin-left:auto}
 .gv-tree-error-mark{margin-left:auto;color:var(--dsw-alias-state-error-primary);font-weight:700;font-size:10px}
 .gv-tree-state{padding:10px 12px;font-size:11.5px;color:var(--dsw-alias-label-secondary);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .gv-tree .gv-loading{padding:20px 10px}
@@ -4355,6 +5121,7 @@ window.__ModuleLoader__.load({
 .gv-st-other{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-secondary)}
 .gv-dialog-mask{z-index:10020}
 .gv-dialog{width:min(430px,94vw);max-height:min(560px,88vh);display:flex;flex-direction:column;background:var(--dsw-alias-bg-base);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;box-shadow:0 24px 70px rgba(0,0,0,.35);overflow:hidden}
+.gv-dialog-wide{width:min(560px,94vw)}
 .gv-dialog-head{flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;height:44px;padding:0 10px 0 15px;border-bottom:1px solid var(--dsw-alias-border-l1)}
 .gv-dialog-title{font-size:13px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gv-dialog-body{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:11px;padding:14px 15px}
