@@ -37,11 +37,21 @@ const remoteStrip = h(
 )
 
 const split = (axis: 'x' | 'y'): React.ReactElement =>
-  h('div', {
-    className: `gv-split${axis === 'y' ? ' gv-split-row' : ''}`,
-    role: 'separator',
-    tabIndex: 0,
-  })
+  h(
+    'div',
+    {
+      className: `gv-split${axis === 'y' ? ' gv-split-row' : ''}`,
+      role: 'separator',
+      tabIndex: 0,
+    },
+    h(
+      'span',
+      { className: 'gv-split-grip', 'aria-hidden': true },
+      h('i', { key: 'a' }),
+      h('i', { key: 'b' }),
+      h('i', { key: 'c' }),
+    ),
+  )
 
 const leftPane = h(
   'div',

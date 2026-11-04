@@ -2,6 +2,14 @@
 
 在 DSH Web 界面中加入 IntelliJ IDEA 风格的 Git 工作台：左侧文件树与提交区可上下拖动，中间彩色提交图，右侧提交详情，三栏宽度也都可以拖动调整。
 
+## 效果
+
+| 亮色主题 | 暗色主题 |
+| --- | --- |
+| [![亮色主题](docs/images/panel-light.png)](docs/images/panel-light.png) | [![暗色主题](docs/images/panel-dark.png)](docs/images/panel-dark.png) |
+
+> 截图由 `pnpm run shots` 使用真实组件、真实样式表和宿主主题令牌生成，夹具是演示仓库数据，不含真实工作区内容。
+
 ## 功能
 
 - 侧边栏 **Git** 图标打开全屏面板，完全跟随 DSH 主题令牌与中英文界面。
@@ -97,6 +105,7 @@ pnpm run reload     # 让运行中的 DSH 热加载插件（不需要刷新页�
 pnpm smoke          # Host 路由 / 客户端注册 / 面板渲染冒烟测试
 pnpm run audit      # 真实 Chrome 计算样式审计（文字/图标对比度、溢出、几何、令牌）
 pnpm preview        # 亮暗两套整页截图 → build/preview/*.png
+pnpm run shots      # 重新生成 README 效果图 → docs/images/panel-{light,dark}.png
 pnpm verify         # 前三步串起来
 ```
 
