@@ -81,6 +81,8 @@ const AUDIT_SCRIPT = String.raw`
   }
 
   const contrast = []
+  const iconContrast = []
+  let iconsChecked = 0
   const geometry = []
   const overflow = []
 
@@ -116,6 +118,43 @@ const AUDIT_SCRIPT = String.raw`
           background: hex(bg),
           ratio: Number(value.toFixed(2)),
           threshold,
+        })
+      }
+    })
+
+    const iconSelectors = [
+      '.gv-icon-button svg',
+      '.gv-head-icon svg',
+      '.gv-chevron svg',
+      '.gv-change-discard svg',
+      '.gv-change-resolve svg',
+      '.gv-row-more svg',
+      '.gv-dropdown-trigger svg',
+      '.gv-split-grip i',
+    ].join(',')
+    shot.querySelectorAll(iconSelectors).forEach((element) => {
+      const style = getComputedStyle(element)
+      const rect = element.getBoundingClientRect()
+      if (style.visibility === 'hidden' || style.display === 'none') return
+      if (rect.width < 3 || rect.height < 3) return
+      if (element.closest('button:disabled, [aria-disabled="true"]')) return
+      let opacity = 1
+      for (let node = element; node && node !== shot; node = node.parentElement) {
+        opacity *= Number(getComputedStyle(node).opacity) || 1
+      }
+      if (opacity < 0.2) return
+      const bg = backgroundOf(element.parentElement || element)
+      const color = element.tagName.toLowerCase() === 'i' ? parse(style.backgroundColor) : parse(style.color)
+      if (!color || (color.a ?? 1) === 0) return
+      iconsChecked += 1
+      const value = ratio(over({ ...color, a: color.a ?? 1 }, bg), bg)
+      if (value < 3) {
+        iconContrast.push({
+          shot: shotName,
+          element: label(element.parentElement || element),
+          color: hex(color),
+          background: hex(bg),
+          ratio: Number(value.toFixed(2)),
         })
       }
     })
@@ -264,7 +303,7 @@ const AUDIT_SCRIPT = String.raw`
   })
   const missing = Array.from(declared).filter((name) => !parsedNames.has(name)).sort()
 
-  const blob = { theme: themeDark ? 'dark' : 'light', contrast, geometry, overflow, tokens, missing }
+  const blob = { theme: themeDark ? 'dark' : 'light', contrast, iconContrast, iconsChecked, geometry, overflow, tokens, missing }
   const out = document.createElement('pre')
   out.id = 'audit-out'
   out.textContent = btoa(unescape(encodeURIComponent(JSON.stringify(blob))))
@@ -320,6 +359,10 @@ if (process.argv.includes('--json')) {
     console.log(`overflow issues: ${report.overflow.length}`)
     for (const issue of report.overflow.slice(0, 20)) {
       console.log(`  ${issue.axis}+${issue.by}px  ${issue.element} in ${issue.parent}  (${issue.shot})`)
+    }
+    console.log(`icon contrast issues: ${report.iconContrast.length} (${report.iconsChecked} icons checked)`)
+    for (const issue of report.iconContrast.slice(0, 20)) {
+      console.log(`  ${issue.ratio.toFixed(2)}:1 < 3  ${issue.element}  ${issue.color} on ${issue.background}  (${issue.shot})`)
     }
     console.log(`unparsed rules: ${report.missing.length}${report.missing.length ? '  ' + report.missing.join(' ') : ''}`)
   }

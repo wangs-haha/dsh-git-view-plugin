@@ -94,7 +94,7 @@ pnpm typecheck      # tsc --noEmit
 pnpm build          # esbuild → index.js + client.js（包根目录）
 pnpm run reload     # 让运行中的 DSH 热加载插件（不需要刷新页面）
 pnpm smoke          # Host 路由 / 客户端注册 / 面板渲染冒烟测试
-pnpm run audit      # 真实 Chrome 计算样式审计（对比度/溢出/几何/令牌）
+pnpm run audit      # 真实 Chrome 计算样式审计（文字/图标对比度、溢出、几何、令牌）
 pnpm preview        # 亮暗两套整页截图 → build/preview/*.png
 pnpm verify         # 前三步串起来
 ```
