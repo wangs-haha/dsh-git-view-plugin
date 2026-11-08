@@ -23,7 +23,7 @@ import {
   IconTree,
   IconUndo,
 } from '../icons.js'
-import { buildChangeTree, collectPaths, collectSelected, type ChangeDir } from './change-tree.js'
+import { buildChangeTree, collectPaths, countSelectedByDir, type ChangeDir } from './change-tree.js'
 import type { ChangesView } from '../layout.js'
 import { ErrorState } from '../ui/ErrorState.js'
 import { Spinner } from '../ui/Spinner.js'
@@ -135,6 +135,7 @@ export function ChangesPane(props: ChangesPaneProps): React.ReactElement {
 
   const [collapsed, setCollapsed] = React.useState<Set<string>>(() => new Set())
   const tree = React.useMemo(() => buildChangeTree(entries), [entries])
+  const selectedByDir = React.useMemo(() => countSelectedByDir(tree, selected), [tree, selected])
   const summary = React.useMemo(() => summarizeChanges(entries), [entries])
   const allSelected = entries.length > 0 && entries.every((entry) => selected.has(entry.path))
   const selectedCount = entries.filter((entry) => selected.has(entry.path)).length
@@ -237,8 +238,7 @@ export function ChangesPane(props: ChangesPaneProps): React.ReactElement {
 
   const renderDir = (node: ChangeDir, depth: number): React.ReactNode[] => {
     const isCollapsed = collapsed.has(node.path)
-    const paths = collectPaths(node)
-    const selectedIn = collectSelected(node, selected)
+    const selectedIn = selectedByDir.get(node) ?? 0
     const all = node.total > 0 && selectedIn === node.total
     const mixed = selectedIn > 0 && !all
     const rows: React.ReactNode[] = [
@@ -272,7 +272,7 @@ export function ChangesPane(props: ChangesPaneProps): React.ReactElement {
           disabled: locked,
           label: `${t('selectAll')} · ${node.path}`,
           onChange: () => {
-            if (!locked) onTogglePaths(paths, !all)
+            if (!locked) onTogglePaths(collectPaths(node), !all)
           },
         }),
         h(IconFolder, { size: 13 }),

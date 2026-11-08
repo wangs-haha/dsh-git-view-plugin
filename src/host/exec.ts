@@ -27,11 +27,30 @@ export const LIMITS = Object.freeze({
 /** Config overrides prepended to every non-streaming invocation. */
 const CONFIG_ARGS = ['-c', 'core.quotepath=false', '-c', 'color.ui=false', '-c', 'core.pager=cat'] as const
 
+/**
+ * Repository-locating variables inherited from the host process. They would
+ * redirect Git away from the workspace root the caller selected, so every
+ * invocation strips them before adding its own environment.
+ */
+const UNSAFE_INHERITED_ENV = [
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_INDEX_FILE',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_COMMON_DIR',
+  'GIT_PREFIX',
+] as const
+
 /** Environment every non-streaming invocation runs with. */
 const GIT_ENV: NodeJS.ProcessEnv = {
   GIT_OPTIONAL_LOCKS: '0',
   GIT_TERMINAL_PROMPT: '0',
   GIT_LITERAL_PATHSPECS: '1',
+  // A command that would open an editor must fail or keep its message instead
+  // of waiting for a terminal that will never appear.
+  GIT_EDITOR: 'true',
+  GIT_SEQUENCE_EDITOR: 'true',
 }
 
 /**
@@ -42,8 +61,22 @@ const STREAM_ENV: NodeJS.ProcessEnv = {
   GIT_TERMINAL_PROMPT: '0',
   GIT_OPTIONAL_LOCKS: '0',
   GIT_PAGER: 'cat',
+  GIT_EDITOR: 'true',
+  GIT_SEQUENCE_EDITOR: 'true',
   LC_ALL: 'C',
   LANG: 'C',
+}
+
+/**
+ * Build the environment of one invocation: start from the host environment,
+ * drop repository-locating overrides, then apply the plugin's own values.
+ * @param overrides - values that win over the defaults.
+ * @returns a fresh environment object.
+ */
+function commandEnv(overrides: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  for (const key of UNSAFE_INHERITED_ENV) delete env[key]
+  return { ...env, ...overrides }
 }
 
 /** One captured `git` run. */
@@ -97,7 +130,7 @@ export class GitRunner {
         [...CONFIG_ARGS, ...args],
         {
           cwd,
-          env: { ...process.env, ...GIT_ENV },
+          env: commandEnv(GIT_ENV),
           windowsHide: true,
           timeout: options.timeout ?? TIMEOUT_MS,
           maxBuffer: options.maxBuffer ?? MAX_BUFFER,
@@ -144,7 +177,7 @@ export class GitRunner {
   spawn(cwd: string, args: readonly string[], env: NodeJS.ProcessEnv = {}): ChildProcess {
     return spawnProcess('git', [...args], {
       cwd,
-      env: { ...process.env, ...STREAM_ENV, ...env },
+      env: commandEnv({ ...STREAM_ENV, ...env }),
       windowsHide: true,
     })
   }

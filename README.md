@@ -114,14 +114,17 @@ pnpm verify         # 前三步串起来
 - 插件以 junction 方式安装在 profile 里。`pnpm build` 后 `client-hmr` 会自动换模块（实测 1 秒级），**不需要刷新页面**；桌面壳刷新页面反而不会重新读取宿主启动时缓存的 boot manifest，只有 HMR 断开时才需要重启 DSH。
 - 桌面端用 `pnpm build && pnpm run reload` 也可以：DSH 的 `client-hmr` 每 500ms 轮询每个客户端 bundle，文件 stat 一变就在 `/plugins/events` 广播 `rebuilt` 帧，页面随即卸载并重建该插件。`--wait` 会打印服务端发布的 rev；脚本优先读 `DSH_WEB_URL` / `DSH_ORIGIN`，不再写死端口。
 - 插件还会**自愈**：面板启动 4 秒后、之后每 60 秒、以及窗口重新可见时，会从 `/plugins/events` 取自己的 bundle 地址，比对编译期写进代码的构建标记（`pnpm build` 会打印 `client build <marker>`）。发现页面跑的是旧构建就自动 `location.reload()` 一次：`sessionStorage` 按标记去重（每个构建最多重载一次，不会循环），页面不可见时不重载，网络或解析失败一律放行。
-- 冒烟测试用临时仓库和 mock 上下文直接调路由，不需要真实 DSH 会话：`scripts/smoke-host.mjs`、`scripts/smoke-client.mjs`、`scripts/smoke-panes.mjs`；`scripts/smoke-selfcheck.mjs` 用假 fetch 断言自愈检查只重载一次且失败放行。
+- 冒烟测试用临时仓库和 mock 上下文直接调路由，不需要真实 DSH 会话：`scripts/smoke-host.mjs`、`scripts/smoke-client.mjs`、`scripts/smoke-panes.mjs`、`scripts/smoke-diff.mjs`；`scripts/smoke-selfcheck.mjs` 用假 fetch 断言自愈检查只重载一次且失败放行。Host 冒烟还覆盖前导空格路径、分离 HEAD 根提交撤销、`push.default=matching` 下的推送范围与范围提交列表。
 - 色彩与布局的令牌层、尺寸规范、以及 `pnpm run audit` 的判定口径见 [docs/ui-design-system.md](docs/ui-design-system.md)。
 
 ## 安全与限制
 
 - 仓库路径只来自已注册的 DSH 工作区；浏览器只发送工作区 id。
-- 所有 Git 命令使用 `execFile` 参数数组执行，分支名、ref 与文件路径在 Host 侧校验，拒绝以 `-` 开头的参数。
-- 「生成信息」只读取状态与 diff，不获取写锁、不修改仓库；`message` 请求失败时可以继续手写提交。
+- 所有 Git 命令使用 `execFile` 参数数组执行，分支名、ref 与文件路径在 Host 侧校验，拒绝以 `-` 开头的参数。**文件路径按原样使用**：不 trim、不替换分隔符，因此名称首尾带空格的文件只会命中它自己；带空格的路径查询也按精确路径处理。
+- 推送始终显式指定 remote 和单一目标分支（`HEAD:refs/heads/<upstream 分支>`），不受 `push.default=matching`、`remote.<name>.push` 等配置影响；`--force-with-lease` 只在 Shift+点击时使用。
+- 撤销根提交只在附着 HEAD 上允许，并且只删除明确的分支引用（带旧 OID 校验）；分离 HEAD 上直接拒绝，不会删除 `HEAD` 文件。
+- 远程任务在取得仓库写锁后才读取状态并构造命令；超时先终止子进程，探测不到退出时在宽限期后收敛终态并释放锁。插件卸载会停止仍运行的任务，避免旧进程与新实例并发。
+- 「生成信息」只读取状态与 diff，不获取写锁、不修改仓库；生成期间可以继续手写草稿，返回结果只有在仓库、选中文件和草稿版本都未变化时才自动填入，否则保留手稿并提示。
 - 回滚未跟踪/新增文件以及强制删除分支不可恢复，界面会二次确认；删除分支后可从提示条恢复（保留 tip 的操作另行提供）。
 - 撤销提交、还原、拣选、检出提交都是本地写操作；merge commit 拒绝 undo/revert/cherry-pick。
 - 一次最多读取 400 个提交、400 个文件、2000 个工作区树条目；单次提交/回滚/标记解决最多 200 个文件；diff 超过 400 KB 会截断。

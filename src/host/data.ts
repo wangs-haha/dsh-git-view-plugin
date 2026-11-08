@@ -11,6 +11,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { LIMITS, GitRunner, type GitResult, type GitRunOptions } from './exec.js'
 import { GitError } from './errors.js'
+import { repoPath } from './paths.js'
 import type {
   CommitDetails,
   CommitFile,
@@ -368,8 +369,26 @@ export class GitData {
     const subject = message.split(/\r?\n/, 1)[0] || ''
 
     const [statusOut, numstatOut] = await Promise.all([
-      this.runner.run(root, ['show', '--format=', '--name-status', '--diff-merges=first-parent', '--no-renames', hash, '--']),
-      this.runner.run(root, ['show', '--format=', '--numstat', '--diff-merges=first-parent', '--no-renames', hash, '--']),
+      this.runner.run(root, [
+        'show',
+        '--format=',
+        '--name-status',
+        '--diff-merges=first-parent',
+        '--no-renames',
+        hash,
+        '--',
+        ...(path ? [path] : []),
+      ]),
+      this.runner.run(root, [
+        'show',
+        '--format=',
+        '--numstat',
+        '--diff-merges=first-parent',
+        '--no-renames',
+        hash,
+        '--',
+        ...(path ? [path] : []),
+      ]),
     ])
 
     const stats = new Map<string, { additions: number | null; deletions: number | null; binary: boolean }>()
@@ -396,10 +415,6 @@ export class GitData {
       const stat = stats.get(filePath) || { additions: 0, deletions: 0, binary: false }
       files.push({ status: status.charAt(0), path: filePath, ...stat })
       if (files.length >= LIMITS.files) break
-    }
-    if (path) {
-      const prefix = `${path}/`
-      files = files.filter((entry) => entry.path === path || entry.path.startsWith(prefix))
     }
     files.sort((a, b) => a.path.localeCompare(b.path))
 
@@ -483,7 +498,7 @@ export class GitData {
    * @returns diff text.
    */
   async workingSummary(root: string, paths: string[], all: boolean): Promise<string> {
-    const targets = all ? [] : (paths || []).filter(Boolean)
+    const targets = all ? [] : (paths || []).filter((value) => typeof value === 'string' && value !== '')
     const suffix = targets.length > 0 ? ['--', ...targets] : []
     const [staged, unstaged] = await Promise.all([
       this.runner.run(root, ['diff', '--cached', '--no-ext-diff', '--unified=2', ...suffix], { maxBuffer: 16 * 1024 * 1024 }),
@@ -514,13 +529,12 @@ export class GitData {
     if (text.length > 5000) throw new GitError('commit message is too long', 400)
 
     if (!all) {
-      const targets = [...new Set((paths || []).map((value) => String(value || '').trim()).filter(Boolean))]
+      const targets = [...new Set((paths || []).filter((value): value is string => typeof value === 'string' && value !== ''))]
       if (targets.length === 0) throw new GitError('select at least one changed file', 400)
       if (targets.length > 200) throw new GitError('too many files in one commit', 400)
       for (const target of targets) {
-        if (target.startsWith('/') || target.includes('\0') || target.split('/').some((part) => part === '..')) {
-          throw new GitError('invalid file path', 400)
-        }
+        // Validate only; a path with leading/trailing spaces is a real file.
+        repoPath(target)
       }
       // A path that is already deleted from both the index and the worktree (a
       // staged deletion) no longer matches `git add -A -- <path>`; git answers

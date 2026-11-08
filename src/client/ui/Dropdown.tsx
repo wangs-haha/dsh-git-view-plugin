@@ -71,6 +71,7 @@ export function Dropdown({
   const rootRef = React.useRef<HTMLDivElement | null>(null)
   const menuRef = React.useRef<HTMLDivElement | null>(null)
   const rowMenuRef = React.useRef<HTMLDivElement | null>(null)
+  const rowMenuAnchor = React.useRef<Element | null>(null)
   const selectedIndex = options.findIndex((option) => option.value === value)
   const current = selectedIndex >= 0 ? options[selectedIndex] : null
 
@@ -101,30 +102,53 @@ export function Dropdown({
    * Open the row's action menu as a side flyout next to the row, so the
    * options read horizontally and are not clipped by the list's scroll box.
    * @param index - option index.
-   * @param anchor - the "…" button of that row.
+   * @param anchor - the row or its "…" button, when the DOM has one.
    */
-  const openRowMenu = (index: number, anchor: Element): void => {
+  const openRowMenu = (index: number, anchor: Element | null): void => {
     if (rowMenu === index) {
       setRowMenu(-1)
       return
     }
     let rect: DOMRect | null = null
-    try {
-      rect = anchor.getBoundingClientRect()
-    } catch {
-      rect = null
+    if (anchor) {
+      try {
+        rect = anchor.getBoundingClientRect()
+      } catch {
+        rect = null
+      }
     }
-    if (!rect) {
-      setRowMenu(index)
-      return
-    }
-    const width = 232
-    const height = 320
-    setRowMenuPos({
-      left: Math.max(8, Math.min(rect.right + 6, window.innerWidth - width - 8)),
-      top: Math.max(8, Math.min(rect.top - 4, window.innerHeight - height - 8)),
-    })
+    rowMenuAnchor.current = anchor
+    // Keyboard opening has no pointer target of its own; keep a visible
+    // fallback position instead of suppressing the portal.
+    setRowMenuPos(
+      rect
+        ? {
+            left: Math.max(8, Math.min(rect.right + 6, window.innerWidth - 232 - 8)),
+            top: Math.max(8, Math.min(rect.top - 4, window.innerHeight - 320 - 8)),
+          }
+        : { left: 8, top: 8 },
+    )
     setRowMenu(index)
+  }
+
+  /**
+   * Open a row menu from the keyboard, anchored on its action button.
+   * @param index - option index.
+   */
+  const openRowMenuAt = (index: number): void => {
+    const row = menuRef.current?.querySelector(`[data-index="${index}"]`)
+    const anchor = row ? row.querySelector('.gv-opt-action') || row : null
+    openRowMenu(index, anchor)
+  }
+
+  /** Close the flyout and return focus to the row that opened it. */
+  const closeRowMenu = (focusAnchor = false): void => {
+    setRowMenu(-1)
+    const anchor = rowMenuAnchor.current
+    rowMenuAnchor.current = null
+    if (focusAnchor && anchor && typeof (anchor as HTMLElement).focus === 'function') {
+      ;(anchor as HTMLElement).focus()
+    }
   }
 
   React.useEffect(() => {
@@ -186,7 +210,7 @@ export function Dropdown({
       const option = options[active]
       if (option && Array.isArray(option.actions) && option.actions.length > 0) {
         event.preventDefault()
-        setRowMenu(active)
+        openRowMenuAt(active)
       }
       return
     }
@@ -253,8 +277,7 @@ export function Dropdown({
                   event.stopPropagation()
                   setActive(index)
                   openRowMenu(index, event.currentTarget)
-                },
-                onMouseDown: (event: React.MouseEvent<HTMLButtonElement>) => event.stopPropagation(),
+                },                onMouseDown: (event: React.MouseEvent<HTMLButtonElement>) => event.stopPropagation(),
               },
               h(IconMore, { size: 14 }),
             )
@@ -316,6 +339,25 @@ export function Dropdown({
               ref: rowMenuRef,
               style: { left: `${rowMenuPos.left}px`, top: `${rowMenuPos.top}px` },
               onMouseDown: (event: React.MouseEvent<HTMLDivElement>) => event.stopPropagation(),
+              onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  closeRowMenu(true)
+                  return
+                }
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                  event.preventDefault()
+                  const items = Array.from(event.currentTarget.querySelectorAll('button'))
+                  if (items.length === 0) return
+                  const at = items.indexOf(document.activeElement as HTMLButtonElement)
+                  const next =
+                    event.key === 'ArrowDown'
+                      ? (at + 1) % items.length
+                      : (at - 1 + items.length) % items.length
+                  items[next]?.focus()
+                }
+              },
             },
             activeActions.map((item, actionIndex) =>
               item.separator

@@ -955,12 +955,21 @@ window.__ModuleLoader__.load({
         __publicField(this, "api");
         __publicField(this, "onUpdate");
         __publicField(this, "currentId", "");
+        __publicField(this, "currentRepo", "");
         this.api = api;
         this.onUpdate = onUpdate;
       }
       /** Whether a job started by this runner is still running. */
       get running() {
         return Boolean(this.currentId);
+      }
+      /** Repository this runner started its job in. */
+      get repoId() {
+        return this.currentRepo;
+      }
+      /** Job id of the current operation. */
+      get jobId() {
+        return this.currentId;
       }
       /**
        * Start one remote operation and poll until it settles.
@@ -973,7 +982,7 @@ window.__ModuleLoader__.load({
       async run(repoId, op, options = {}, signal) {
         const start = await this.start(repoId, op, options);
         try {
-          return await this.poll(repoId, start.id, signal);
+          return await this.poll(start.id, signal);
         } finally {
           this.currentId = "";
         }
@@ -989,17 +998,17 @@ window.__ModuleLoader__.load({
       async start(repoId, op, options = {}) {
         const start = await this.api.write({ repo: repoId, action: "remote", op, ...options });
         this.currentId = start.id;
+        this.currentRepo = repoId;
         return start;
       }
       /**
        * Poll a job started by this runner until it settles.
-       * @param repoId - workspace id.
        * @param jobId - job id.
        * @param signal - cancellation.
        * @returns the final snapshot.
        */
-      async poll(repoId, jobId, signal) {
-        return this.api.pollRemote(repoId, jobId, this.onUpdate, signal);
+      async poll(jobId, signal) {
+        return this.api.pollRemote(this.currentRepo, jobId, this.onUpdate, signal);
       }
       /** Forget the current job id (after polling ends). */
       clear() {
@@ -1007,19 +1016,22 @@ window.__ModuleLoader__.load({
       }
       /**
        * Ask the running job to stop. Safe to call when nothing is running.
-       * @param repoId - workspace id.
+       * @returns whether the host accepted the request.
        */
-      async cancel(repoId) {
-        if (!this.currentId) return;
+      async cancel() {
+        if (!this.currentId) return true;
         try {
-          await this.api.write({ repo: repoId, action: "remoteCancel", id: this.currentId });
-        } catch {
+          await this.api.write({ repo: this.currentRepo, action: "remoteCancel", id: this.currentId });
+          return true;
+        } catch (error) {
+          if (error instanceof GitApiError && error.status === 404) return true;
+          return false;
         }
       }
     };
 
     // src/client/selfcheck.ts
-    var BUILD_MARKER = true ? "mw76fnla-nok8" : "";
+    var BUILD_MARKER = true ? "mw77e93g-nsg0" : "";
     var PLUGIN_ID = true ? "@local/dsh-git-view" : "@local/dsh-git-view";
     var GUARD_PREFIX = "dsh.git-view.selfcheck.";
     var DEFAULT_TIMEOUT_MS = 5e3;
@@ -2275,7 +2287,7 @@ window.__ModuleLoader__.load({
 
     // src/client/panes/change-tree.ts
     function makeDir(name, path) {
-      return { name, path, dirs: [], files: [], total: 0 };
+      return { name, path, dirs: [], files: [], total: 0, index: /* @__PURE__ */ new Map() };
     }
     function byName(a, b) {
       return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
@@ -2294,10 +2306,11 @@ window.__ModuleLoader__.load({
         let path = "";
         for (let index = 0; index < parts.length - 1; index += 1) {
           path = path ? `${path}/${parts[index]}` : parts[index];
-          let next = node.dirs.find((dir) => dir.name === parts[index]);
+          let next = node.index.get(parts[index]);
           if (!next) {
             next = makeDir(parts[index], path);
             node.dirs.push(next);
+            node.index.set(parts[index], next);
           }
           node = next;
         }
@@ -2315,14 +2328,17 @@ window.__ModuleLoader__.load({
       visit(dir);
       return paths;
     }
-    function collectSelected(dir, selected) {
-      let count = 0;
+    function countSelectedByDir(root, selected) {
+      const counts = /* @__PURE__ */ new Map();
       const visit = (node) => {
+        let count = 0;
         for (const file of node.files) if (selected.has(file.path)) count += 1;
-        for (const child of node.dirs) visit(child);
+        for (const child of node.dirs) count += visit(child);
+        counts.set(node, count);
+        return count;
       };
-      visit(dir);
-      return count;
+      visit(root);
+      return counts;
     }
 
     // src/client/panes/ChangesPane.tsx
@@ -2379,6 +2395,7 @@ window.__ModuleLoader__.load({
       } = props;
       const [collapsed, setCollapsed] = React9.useState(() => /* @__PURE__ */ new Set());
       const tree = React9.useMemo(() => buildChangeTree(entries), [entries]);
+      const selectedByDir = React9.useMemo(() => countSelectedByDir(tree, selected), [tree, selected]);
       const summary = React9.useMemo(() => summarizeChanges(entries), [entries]);
       const allSelected = entries.length > 0 && entries.every((entry) => selected.has(entry.path));
       const selectedCount = entries.filter((entry) => selected.has(entry.path)).length;
@@ -2477,8 +2494,7 @@ window.__ModuleLoader__.load({
       };
       const renderDir = (node, depth) => {
         const isCollapsed = collapsed.has(node.path);
-        const paths = collectPaths(node);
-        const selectedIn = collectSelected(node, selected);
+        const selectedIn = selectedByDir.get(node) ?? 0;
         const all = node.total > 0 && selectedIn === node.total;
         const mixed = selectedIn > 0 && !all;
         const rows = [
@@ -2512,7 +2528,7 @@ window.__ModuleLoader__.load({
               disabled: locked,
               label: `${t("selectAll")} · ${node.path}`,
               onChange: () => {
-                if (!locked) onTogglePaths(paths, !all);
+                if (!locked) onTogglePaths(collectPaths(node), !all);
               }
             }),
             h9(IconFolder, { size: 13 }),
@@ -3131,7 +3147,8 @@ window.__ModuleLoader__.load({
     // src/client/panes/CompareDialog.tsx
     var React11 = __toESM(require("react"), 1);
     var import_react_dom = __toESM(require("react-dom"), 1);
-    var h11 = React11.createElement;
+
+    // src/client/panes/diff-parser.ts
     var MAX_DIFF_ROWS = 3e3;
     function parseDiffRows(text) {
       const lines = String(text || "").split(/\r?\n/);
@@ -3141,6 +3158,17 @@ window.__ModuleLoader__.load({
       let inHunk = false;
       let truncated = false;
       let index = 0;
+      const add = (row) => {
+        if (rows.length >= MAX_DIFF_ROWS) {
+          truncated = true;
+          return false;
+        }
+        rows.push(row);
+        return true;
+      };
+      const skipMarkers = () => {
+        while (index < lines.length && lines[index].startsWith("\\")) index += 1;
+      };
       while (index < lines.length) {
         const line = lines[index];
         if (line.startsWith("@@")) {
@@ -3149,13 +3177,14 @@ window.__ModuleLoader__.load({
             oldNo = Number(match[1]);
             newNo = Number(match[2]);
           }
-          rows.push({ kind: "hunk", text: line });
           inHunk = true;
+          if (!add({ kind: "hunk", text: line })) break;
           index += 1;
-          if (rows.length >= MAX_DIFF_ROWS) {
-            truncated = true;
-            break;
-          }
+          continue;
+        }
+        if (line.startsWith("diff --git ")) {
+          inHunk = false;
+          index += 1;
           continue;
         }
         if (!inHunk) {
@@ -3166,52 +3195,60 @@ window.__ModuleLoader__.load({
           index += 1;
           continue;
         }
-        if (line.startsWith("-") && !line.startsWith("---")) {
+        if (line.startsWith("-")) {
           const deletions = [];
-          while (index < lines.length && lines[index].startsWith("-") && !lines[index].startsWith("---")) {
+          while (index < lines.length && lines[index].startsWith("-")) {
             deletions.push(lines[index].slice(1));
             index += 1;
           }
+          skipMarkers();
           const additions = [];
-          while (index < lines.length && lines[index].startsWith("+") && !lines[index].startsWith("+++")) {
+          while (index < lines.length && lines[index].startsWith("+")) {
             additions.push(lines[index].slice(1));
             index += 1;
           }
+          skipMarkers();
           const count = Math.max(deletions.length, additions.length);
           for (let k = 0; k < count; k += 1) {
             const oldText = k < deletions.length ? deletions[k] : null;
             const newText = k < additions.length ? additions[k] : null;
-            rows.push({
+            const ok = add({
               kind: oldText !== null && newText !== null ? "change" : oldText !== null ? "del" : "add",
               oldNo: oldText !== null ? oldNo++ : null,
               oldText,
               newNo: newText !== null ? newNo++ : null,
               newText
             });
+            if (!ok) return { rows, truncated };
           }
           continue;
         }
-        if (line.startsWith("+") && !line.startsWith("+++")) {
-          while (index < lines.length && lines[index].startsWith("+") && !lines[index].startsWith("+++")) {
-            rows.push({
+        if (line.startsWith("+")) {
+          while (index < lines.length && lines[index].startsWith("+")) {
+            if (!add({
               kind: "add",
               oldNo: null,
               oldText: null,
               newNo: newNo++,
               newText: lines[index].slice(1)
-            });
+            })) {
+              return { rows, truncated };
+            }
             index += 1;
           }
+          skipMarkers();
           continue;
         }
         if (line.startsWith(" ")) {
-          rows.push({
+          if (!add({
             kind: "ctx",
             oldNo: oldNo++,
             oldText: line.slice(1),
             newNo: newNo++,
             newText: line.slice(1)
-          });
+          })) {
+            break;
+          }
           index += 1;
           continue;
         }
@@ -3219,6 +3256,9 @@ window.__ModuleLoader__.load({
       }
       return { rows, truncated };
     }
+
+    // src/client/panes/CompareDialog.tsx
+    var h11 = React11.createElement;
     function compareRow(row, side, key) {
       if (row.kind === "hunk") {
         return h11("div", { key, className: "gv-crow gv-crow-hunk" }, h11("span", { className: "gv-chunk" }, row.text));
@@ -3357,7 +3397,7 @@ window.__ModuleLoader__.load({
       const { t, commit, details, loading, error, copied, scope, headHash, onCopy, onCompare, onSelectHash, onHistory } = props;
       const spinner = h12(Spinner, { label: t("loadingDetail") });
       let body = null;
-      if (loading && !details) {
+      if (!details && (loading || commit && !error)) {
         body = spinner;
       } else if (!commit && !details) {
         body = h12(
@@ -3675,6 +3715,7 @@ window.__ModuleLoader__.load({
       const rootRef = React14.useRef(null);
       const menuRef = React14.useRef(null);
       const rowMenuRef = React14.useRef(null);
+      const rowMenuAnchor = React14.useRef(null);
       const selectedIndex = options.findIndex((option) => option.value === value);
       const current = selectedIndex >= 0 ? options[selectedIndex] : null;
       React14.useEffect(() => {
@@ -3703,22 +3744,35 @@ window.__ModuleLoader__.load({
           return;
         }
         let rect = null;
-        try {
-          rect = anchor.getBoundingClientRect();
-        } catch {
-          rect = null;
+        if (anchor) {
+          try {
+            rect = anchor.getBoundingClientRect();
+          } catch {
+            rect = null;
+          }
         }
-        if (!rect) {
-          setRowMenu(index);
-          return;
-        }
-        const width2 = 232;
-        const height = 320;
-        setRowMenuPos({
-          left: Math.max(8, Math.min(rect.right + 6, window.innerWidth - width2 - 8)),
-          top: Math.max(8, Math.min(rect.top - 4, window.innerHeight - height - 8))
-        });
+        rowMenuAnchor.current = anchor;
+        setRowMenuPos(
+          rect ? {
+            left: Math.max(8, Math.min(rect.right + 6, window.innerWidth - 232 - 8)),
+            top: Math.max(8, Math.min(rect.top - 4, window.innerHeight - 320 - 8))
+          } : { left: 8, top: 8 }
+        );
         setRowMenu(index);
+      };
+      const openRowMenuAt = (index) => {
+        const row = menuRef.current?.querySelector(`[data-index="${index}"]`);
+        const anchor = row ? row.querySelector(".gv-opt-action") || row : null;
+        openRowMenu(index, anchor);
+      };
+      const closeRowMenu = (focusAnchor = false) => {
+        setRowMenu(-1);
+        const anchor = rowMenuAnchor.current;
+        rowMenuAnchor.current = null;
+        if (focusAnchor && anchor && typeof anchor.focus === "function") {
+          ;
+          anchor.focus();
+        }
       };
       React14.useEffect(() => {
         if (open) setActive(selectedIndex >= 0 ? selectedIndex : options.length > 0 ? 0 : -1);
@@ -3775,7 +3829,7 @@ window.__ModuleLoader__.load({
           const option = options[active];
           if (option && Array.isArray(option.actions) && option.actions.length > 0) {
             event.preventDefault();
-            setRowMenu(active);
+            openRowMenuAt(active);
           }
           return;
         }
@@ -3884,7 +3938,23 @@ window.__ModuleLoader__.load({
               "aria-label": t("branchActions"),
               ref: rowMenuRef,
               style: { left: `${rowMenuPos.left}px`, top: `${rowMenuPos.top}px` },
-              onMouseDown: (event) => event.stopPropagation()
+              onMouseDown: (event) => event.stopPropagation(),
+              onKeyDown: (event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  closeRowMenu(true);
+                  return;
+                }
+                if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+                  event.preventDefault();
+                  const items = Array.from(event.currentTarget.querySelectorAll("button"));
+                  if (items.length === 0) return;
+                  const at = items.indexOf(document.activeElement);
+                  const next = event.key === "ArrowDown" ? (at + 1) % items.length : (at - 1 + items.length) % items.length;
+                  items[next]?.focus();
+                }
+              }
             },
             activeActions.map(
               (item, actionIndex) => item.separator ? h14("div", { key: `sep-${actionIndex}`, className: "gv-opt-menu-sep", role: "separator" }) : h14(
@@ -4134,11 +4204,21 @@ window.__ModuleLoader__.load({
       const [rollbackError, setRollbackError] = React16.useState("");
       const [commitMenu, setCommitMenu] = React16.useState(null);
       const [remoteJob, setRemoteJob] = React16.useState(null);
+      const [remoteRepo, setRemoteRepo] = React16.useState("");
       const remoteClearTimer = React16.useRef(null);
       const runnerRef = React16.useRef(null);
+      const remoteAbortRef = React16.useRef(null);
       const [commitBusy, setCommitBusy] = React16.useState(false);
       const [commitAiBusy, setCommitAiBusy] = React16.useState(false);
       const [commitError, setCommitError] = React16.useState("");
+      const [repoState, setRepoState] = React16.useState(null);
+      const repoEpoch = React16.useRef(0);
+      const repoIdRef = React16.useRef("");
+      const refValueRef = React16.useRef("");
+      const draftRevision = React16.useRef(0);
+      const headSyncRef = React16.useRef("");
+      const selectedPathsRef = React16.useRef([]);
+      const remoteActiveRef = React16.useRef(false);
       const [actionDialog, setActionDialog] = React16.useState(null);
       const [actionBusy, setActionBusy] = React16.useState(false);
       const [actionError, setActionError] = React16.useState("");
@@ -4203,19 +4283,31 @@ window.__ModuleLoader__.load({
         setDiffError("");
         setCommitError("");
       }, []);
+      React16.useEffect(() => {
+        repoIdRef.current = repoId;
+      }, [repoId]);
+      React16.useEffect(() => {
+        refValueRef.current = refValue;
+      }, [refValue]);
       const selectRepo = React16.useCallback(
         (next) => {
+          repoEpoch.current += 1;
+          headSyncRef.current = "";
+          repoIdRef.current = next;
           setRepoId(next);
           setRefValue("");
           setLog(null);
           setLogError("");
+          setRepoState(null);
           setChanges(null);
           setChangesError("");
           setChangesLoading(false);
           setDeselectedChanges(/* @__PURE__ */ new Set());
+          draftRevision.current += 1;
           setCommitMessage("");
           setCommitError("");
           setCommitBusy(false);
+          setActionBusy(false);
           setActionDialog(null);
           setActionError("");
           notices.clear();
@@ -4236,10 +4328,11 @@ window.__ModuleLoader__.load({
       const loadTree = React16.useCallback(
         async (path, options = {}) => {
           if (!repoId) return;
+          const generation = options.generation ?? treeGeneration.current;
+          if (generation !== treeGeneration.current) return;
           if (treeLoadingRef.current.has(path)) return;
           const force = options.force === true;
           if (!force && path && treeChildrenRef.current[path]) return;
-          const generation = treeGeneration.current;
           treeLoadingRef.current.add(path);
           setTreeLoading((previous) => new Set(previous).add(path));
           setTreeErrors((previous) => {
@@ -4277,12 +4370,20 @@ window.__ModuleLoader__.load({
       );
       const refreshTree = React16.useCallback(async () => {
         if (!repoId) return;
+        const generation = treeGeneration.current;
+        const repo2 = repoId;
+        const ref = refValue;
         const paths = /* @__PURE__ */ new Set([""]);
         for (const key of Object.keys(treeChildrenRef.current)) {
-          if (key) paths.add(key);
+          if (key && treeExpanded.has(key)) paths.add(key);
         }
-        for (const path of paths) await loadTree(path, { force: true });
-      }, [repoId, loadTree]);
+        for (const path of paths) {
+          if (generation !== treeGeneration.current || repoIdRef.current !== repo2 || refValueRef.current !== ref) {
+            return;
+          }
+          await loadTree(path, { force: true, generation });
+        }
+      }, [repoId, refValue, treeExpanded, loadTree]);
       React16.useEffect(() => {
         const controller = new AbortController();
         setRepos(null);
@@ -4360,6 +4461,7 @@ window.__ModuleLoader__.load({
           if (controller.signal.aborted) return;
           const entries = Array.isArray(payload.entries) ? payload.entries : [];
           setChanges(entries);
+          if (payload.state) setRepoState(payload.state);
           setChangesLoading(false);
           setDeselectedChanges((previous) => {
             if (previous.size === 0) return previous;
@@ -4393,6 +4495,7 @@ window.__ModuleLoader__.load({
         const controller = new AbortController();
         setLoadingDetails(true);
         setDetailsError("");
+        setDetails((previous) => previous && previous.hash === selected ? previous : null);
         const params = { repo: repoId, hash: selected };
         if (scope) params.path = scope;
         api.read("commit", params, controller.signal).then((payload) => {
@@ -4460,6 +4563,7 @@ window.__ModuleLoader__.load({
       }, [compact, repoId, repos]);
       React16.useEffect(
         () => () => {
+          remoteAbortRef.current?.abort();
           if (copyTimer.current !== null) window.clearTimeout(copyTimer.current);
           if (remoteClearTimer.current !== null) window.clearTimeout(remoteClearTimer.current);
         },
@@ -4522,6 +4626,10 @@ window.__ModuleLoader__.load({
         () => commits.find((commit) => commit.hash === selected) || null,
         [commits, selected]
       );
+      const visibleDetails = React16.useMemo(
+        () => details && selected && details.hash === selected ? details : null,
+        [details, selected]
+      );
       const repo = React16.useMemo(
         () => (repos || []).find((entry) => entry.id === repoId) || null,
         [repos, repoId]
@@ -4535,6 +4643,9 @@ window.__ModuleLoader__.load({
         [visibleChanges, deselectedChanges]
       );
       const selectedChangeSet = React16.useMemo(() => new Set(selectedChangePaths), [selectedChangePaths]);
+      React16.useEffect(() => {
+        selectedPathsRef.current = selectedChangePaths;
+      }, [selectedChangePaths]);
       const copyHash = React16.useCallback(async (hash) => {
         try {
           await navigator.clipboard.writeText(hash);
@@ -4598,10 +4709,11 @@ window.__ModuleLoader__.load({
       }, [loadTree]);
       const openCompare = React16.useCallback(
         (entry) => {
-          if (!selected) return;
-          setCompare({ file: entry, hash: selected });
+          const hash = visibleDetails?.hash || selected;
+          if (!hash) return;
+          setCompare({ file: entry, hash });
         },
-        [selected]
+        [visibleDetails, selected]
       );
       const closeCompare = React16.useCallback(() => {
         setCompare(null);
@@ -4645,6 +4757,10 @@ window.__ModuleLoader__.load({
       const refreshChanges = React16.useCallback(() => {
         setChangesTick((value) => value + 1);
       }, []);
+      const updateCommitMessage = React16.useCallback((value) => {
+        draftRevision.current += 1;
+        setCommitMessage(value);
+      }, []);
       const performCommit = React16.useCallback(async () => {
         if (!repoId || commitBusy) return;
         if (selectedChangePaths.length === 0) {
@@ -4664,6 +4780,7 @@ window.__ModuleLoader__.load({
             paths: selectedChangePaths,
             message: commitMessage
           });
+          draftRevision.current += 1;
           setCommitMessage("");
           setDeselectedChanges(/* @__PURE__ */ new Set());
           setSelected("");
@@ -4674,6 +4791,7 @@ window.__ModuleLoader__.load({
           setChangesTick((value) => value + 1);
         } catch (error) {
           setCommitError("");
+          setChangesTick((value) => value + 1);
           reportError("commit", error);
         } finally {
           setCommitBusy(false);
@@ -4685,17 +4803,26 @@ window.__ModuleLoader__.load({
           setCommitError(translate("commitSelectRequired"));
           return;
         }
+        const epoch = repoEpoch.current;
+        const repo2 = repoId;
+        const revision = draftRevision.current;
+        const selection = selectedChangePaths.join("\n");
         setCommitAiBusy(true);
         setCommitError("");
         try {
           const payload = await api.write({
-            repo: repoId,
+            repo: repo2,
             action: "message",
             paths: selectedChangePaths,
             locale: uiLocale()
           });
+          if (repoEpoch.current !== epoch || repoIdRef.current !== repo2) return;
           const draft = typeof payload.message === "string" ? payload.message : "";
-          setCommitMessage(draft);
+          if (draftRevision.current !== revision || selectedPathsRef.current.join("\n") !== selection) {
+            notices.show(translate("draftOutdated"), "ok");
+            return;
+          }
+          updateCommitMessage(draft);
           window.requestAnimationFrame(() => {
             const node = messageRef.current;
             if (!node) return;
@@ -4707,12 +4834,13 @@ window.__ModuleLoader__.load({
             }
           });
         } catch (error) {
+          if (repoEpoch.current !== epoch) return;
           setCommitError("");
           reportError("ai", error);
         } finally {
           setCommitAiBusy(false);
         }
-      }, [repoId, commitBusy, commitAiBusy, selectedChangePaths, translate, api, reportError]);
+      }, [repoId, commitBusy, commitAiBusy, selectedChangePaths, translate, api, reportError, notices, updateCommitMessage]);
       const commitSelected = React16.useCallback(() => {
         void performCommit();
       }, [performCommit]);
@@ -4725,19 +4853,40 @@ window.__ModuleLoader__.load({
       const runRemote = React16.useCallback(
         async (op, options = {}) => {
           if (!repoId) return;
+          if (remoteActiveRef.current) return;
+          if (remoteJob && (remoteJob.state === "running" || remoteJob.state === "cancelling")) return;
+          remoteActiveRef.current = true;
+          const epoch = repoEpoch.current;
+          const repo2 = repoId;
+          const controller = new AbortController();
+          remoteAbortRef.current?.abort();
+          remoteAbortRef.current = controller;
+          if (remoteClearTimer.current !== null) {
+            window.clearTimeout(remoteClearTimer.current);
+            remoteClearTimer.current = null;
+          }
           setActionBusy(true);
           setActionError("");
           let started = false;
           const runner = new RemoteRunner(api, (snapshot) => {
+            if (controller.signal.aborted) return;
             started = true;
+            setRemoteRepo(repo2);
             setRemoteJob(snapshot);
-            setActionBusy(false);
-            setActionDialog(null);
+            if (repoEpoch.current === epoch) {
+              setActionBusy(false);
+              setActionDialog(null);
+            }
           });
           runnerRef.current = runner;
           try {
-            const start = await runner.start(repoId, op, options);
+            const start = await runner.start(repo2, op, options);
+            if (controller.signal.aborted || repoEpoch.current !== epoch) {
+              void runner.cancel();
+              return;
+            }
             started = true;
+            setRemoteRepo(repo2);
             setActionBusy(false);
             setActionDialog(null);
             setRemoteJob({
@@ -4752,33 +4901,45 @@ window.__ModuleLoader__.load({
               startedAt: Date.now(),
               endedAt: null
             });
-            const snapshot = await runner.poll(repoId, start.id);
+            const snapshot = await runner.poll(start.id, controller.signal);
+            if (controller.signal.aborted) return;
             runner.clear();
-            setActionBusy(false);
-            if (snapshot.state === "done") {
-              showRepoNotice(translate(remoteDoneKey(op)));
-              refresh();
-              setChangesTick((value) => value + 1);
-            } else if (snapshot.state === "cancelled") {
-              showRepoNotice(translate("remoteCancelled"));
-            } else {
-              reportMessage("remote", snapshot.error || translate("remoteFailed"), (snapshot.lines || []).join("\n"));
+            const current = repoEpoch.current === epoch;
+            if (current) {
+              setActionBusy(false);
+              if (snapshot.state === "done") {
+                showRepoNotice(translate(remoteDoneKey(op)));
+                refresh();
+                setChangesTick((value) => value + 1);
+              } else if (snapshot.state === "cancelled") {
+                showRepoNotice(translate("remoteCancelled"));
+              } else {
+                reportMessage("remote", snapshot.error || translate("remoteFailed"), (snapshot.lines || []).join("\n"));
+              }
             }
             if (remoteClearTimer.current !== null) window.clearTimeout(remoteClearTimer.current);
-            remoteClearTimer.current = window.setTimeout(() => setRemoteJob(null), REMOTE_STRIP_MS);
+            remoteClearTimer.current = window.setTimeout(() => {
+              setRemoteJob(null);
+              setRemoteRepo("");
+            }, REMOTE_STRIP_MS);
           } catch (error) {
-            setActionBusy(false);
             if (isAbort(error)) return;
+            runner.clear();
+            if (repoEpoch.current !== epoch) return;
+            setActionBusy(false);
             if (!started) {
               reportError("remote", error);
               return;
             }
             setRemoteJob((previous) => remoteErrorSnapshot(previous, op, errorText(error)));
-            runner.clear();
             reportError("remote", error);
+          } finally {
+            remoteActiveRef.current = false;
+            if (remoteAbortRef.current === controller) remoteAbortRef.current = null;
+            if (runnerRef.current === runner) setActionBusy(false);
           }
         },
-        [repoId, api, translate, showRepoNotice, refresh, reportError, reportMessage]
+        [repoId, remoteJob, api, translate, showRepoNotice, refresh, reportError, reportMessage]
       );
       const requestRemote = React16.useCallback(
         (op, options = {}) => {
@@ -4788,9 +4949,13 @@ window.__ModuleLoader__.load({
         [repoId, runRemote]
       );
       const cancelRemoteJob = React16.useCallback(() => {
-        if (!repoId || !remoteJob || remoteJob.state !== "running") return;
-        void runnerRef.current?.cancel(repoId);
-      }, [repoId, remoteJob]);
+        if (!remoteJob || remoteJob.state !== "running" && remoteJob.state !== "cancelling") return;
+        const runner = runnerRef.current;
+        if (!runner) return;
+        void runner.cancel().then((ok) => {
+          if (!ok) reportMessage("remote", translate("remoteCancelFailed"));
+        });
+      }, [remoteJob, translate, reportMessage]);
       const executeBranchOp = React16.useCallback(
         async (op, payload) => {
           if (!repoId || actionBusy) return false;
@@ -5063,7 +5228,15 @@ window.__ModuleLoader__.load({
         if (!refValue || !log || !Array.isArray(log.refs)) return null;
         return log.refs.find((entry) => entry.ref === refValue) || null;
       }, [log, refValue]);
-      const branchState = log && log.state ? log.state : null;
+      const branchState = repoState ?? (log && log.state ? log.state : null);
+      React16.useEffect(() => {
+        if (!repoState || !log) return;
+        if (repoState.branch === log.head.branch && repoState.hash === log.head.hash) return;
+        const key = `${repoState.branch}|${repoState.hash}|${log.head.branch}|${log.head.hash}`;
+        if (headSyncRef.current === key) return;
+        headSyncRef.current = key;
+        setReloadTick((value) => value + 1);
+      }, [repoState, log]);
       const buildBranchMenu = React16.useCallback(
         (entry) => {
           const items = [];
@@ -5303,7 +5476,7 @@ window.__ModuleLoader__.load({
               setRollbackError("");
               setRollbackOpen(true);
             },
-            onMessage: setCommitMessage,
+            onMessage: updateCommitMessage,
             onCommit: commitSelected,
             onGenerate: generateMessage,
             onDiscard: requestDiscard,
@@ -5350,7 +5523,7 @@ window.__ModuleLoader__.load({
         h16(DetailsPane, {
           t: translate,
           commit: selectedCommit,
-          details,
+          details: visibleDetails,
           loading: loadingDetails,
           error: detailsError,
           copied,
@@ -5435,7 +5608,7 @@ window.__ModuleLoader__.load({
           matchCount: matches ? matches.size : null,
           onRefresh: refresh,
           sync: branchState,
-          syncBusy: actionBusy || Boolean(remoteJob && remoteJob.state === "running"),
+          syncBusy: actionBusy || Boolean(remoteJob && (remoteJob.state === "running" || remoteJob.state === "cancelling")),
           onFetch: () => requestRemote("fetch"),
           onPull: (rebase) => requestRemote("pull", rebase ? { rebase: true } : {}),
           onPush: (force) => requestRemote("push", force ? { forceWithLease: true } : {})
@@ -5446,7 +5619,7 @@ window.__ModuleLoader__.load({
           notice: repoNotice,
           onClose: () => notices.clear()
         }) : null,
-        remoteJob ? h16(
+        remoteJob && remoteRepo === repoId ? h16(
           "div",
           { className: `gv-remote gv-remote-${remoteJob.state}` },
           remoteJob.state === "running" || remoteJob.state === "cancelling" ? h16("span", { className: "gv-inline-spin", "aria-hidden": true }) : null,
@@ -5463,7 +5636,7 @@ window.__ModuleLoader__.load({
             },
             remoteJob.lines && remoteJob.lines.length ? remoteJob.lines[remoteJob.lines.length - 1] : remoteJob.error || translate("remoteRunning")
           ),
-          remoteJob.state === "running" ? h16(
+          remoteJob.state === "running" || remoteJob.state === "cancelling" ? h16(
             "button",
             { type: "button", className: "gv-remote-cancel", onClick: cancelRemoteJob },
             translate("cancel")
@@ -5681,6 +5854,8 @@ window.__ModuleLoader__.load({
       pushDone: "已推送",
       remoteFailed: "网络操作失败",
       remoteCancelled: "已取消网络操作",
+      remoteCancelFailed: "取消请求未送达，操作可能仍在运行",
+      draftOutdated: "提交信息已更新，生成结果没有覆盖你的草稿",
       remoteRunning: "正在与远端通信…",
       branchActions: "分支操作",
       checkoutBranch: "检出分支",
@@ -5877,6 +6052,8 @@ window.__ModuleLoader__.load({
       pushDone: "Pushed",
       remoteFailed: "Remote operation failed",
       remoteCancelled: "Remote operation cancelled",
+      remoteCancelFailed: "The cancel request did not arrive; the operation may still be running",
+      draftOutdated: "The draft changed, so the generated message was not applied",
       remoteRunning: "Talking to the remote…",
       branchActions: "Branch actions",
       checkoutBranch: "Checkout",

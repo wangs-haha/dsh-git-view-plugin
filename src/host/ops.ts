@@ -18,6 +18,7 @@ import { isAbsolute, join, resolve } from 'node:path'
 import { GitData } from './data.js'
 import { GitError } from './errors.js'
 import { failure, type GitResult } from './exec.js'
+import { repoPaths } from './paths.js'
 import type {
   BranchOperationResult,
   CheckoutResult,
@@ -245,11 +246,17 @@ export class GitOps {
     else if (has('BISECT_LOG')) operation = 'bisect'
 
     let upstream = ''
+    let upstreamRef = ''
     let ahead = 0
     let behind = 0
     if (head.branch) {
       try {
         upstream = (await this.data.run(root, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])).trim()
+        try {
+          upstreamRef = (await this.data.run(root, ['rev-parse', '--symbolic-full-name', '@{upstream}'])).trim()
+        } catch {
+          upstreamRef = ''
+        }
         const counts = (await this.data.run(root, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD']))
           .trim()
           .split(/\s+/)
@@ -257,6 +264,7 @@ export class GitOps {
         ahead = Number.parseInt(counts[1], 10) || 0
       } catch {
         upstream = ''
+        upstreamRef = ''
         ahead = 0
         behind = 0
       }
@@ -269,6 +277,7 @@ export class GitOps {
       unborn: Boolean(head.branch && !head.hash),
       operation,
       upstream,
+      upstreamRef,
       ahead,
       behind,
     }
@@ -321,19 +330,9 @@ export class GitOps {
       result = await this.data.runResult(root, ['branch', name, ...suffix])
     }
     if (result.code !== 0) {
-      if (wantCheckout) {
-        // `switch -c` may create the branch before failing to check it out (for
-        // example when local changes would be overwritten). Remove the branch we
-        // just created so the user can retry cleanly.
-        try {
-          const head = await this.data.head(root)
-          if (head.branch !== name && (await this.findLocalBranch(root, name))) {
-            await this.data.runResult(root, ['branch', '-D', name])
-          }
-        } catch {
-          /* best-effort cleanup */
-        }
-      }
+      // Never delete a same-named branch as a "cleanup": between the precheck
+      // and this command another writer may have created it, and the name does
+      // not prove that this operation owns it.
       throw writeFailure(result, 'could not create the branch')
     }
     return {
@@ -488,11 +487,8 @@ export class GitOps {
    */
   async discardChanges(root: string, rawPaths: unknown[], options: DiscardOptions = {}): Promise<DiscardResult> {
     const deleteAdded = options.deleteAdded !== false
-    const requested = [
-      ...new Set((Array.isArray(rawPaths) ? rawPaths : []).map((value) => String(value || '').trim()).filter(Boolean)),
-    ]
+    const requested = repoPaths(rawPaths)
     if (requested.length === 0) throw new GitError('select at least one changed file', 400)
-    if (requested.length > 200) throw new GitError('too many files in one operation', 400)
 
     const entries = await this.data.status(root)
     const byPath = new Map(entries.map((entry) => [entry.path, entry]))
@@ -608,8 +604,18 @@ export class GitOps {
       const parents = await this.resolveParents(root, 'HEAD')
       if (parents.length > 1) throw new GitError('cannot undo a merge commit — revert it instead', 409)
       if (parents.length === 0) {
-        // The root commit has no parent: drop the branch pointer, keep the files.
-        const output = await this.runWrite(root, ['update-ref', '-d', 'HEAD'], 'could not undo the first commit')
+        // Dropping the branch pointer keeps the files but makes the branch
+        // unborn. On a detached HEAD there is no branch pointer to drop, and
+        // `update-ref -d HEAD` would delete `.git/HEAD` itself.
+        if (!head.branch) {
+          throw new GitError('cannot undo the root commit while HEAD is detached', 409)
+        }
+        const branchRef = `refs/heads/${assertBranchName(head.branch)}`
+        const output = await this.runWrite(
+          root,
+          ['update-ref', '-d', branchRef, head.hash],
+          'could not undo the first commit',
+        )
         return { op: 'undo', from: head.hash, to: null, output }
       }
       const output = await this.runWrite(root, ['reset', '--soft', parents[0], '--'], 'could not undo the last commit')
@@ -650,11 +656,8 @@ export class GitOps {
    * @returns operation result.
    */
   async stageResolvedPaths(root: string, rawPaths: unknown[]): Promise<StageResult> {
-    const requested = [
-      ...new Set((Array.isArray(rawPaths) ? rawPaths : []).map((value) => String(value || '').trim()).filter(Boolean)),
-    ]
+    const requested = repoPaths(rawPaths)
     if (requested.length === 0) throw new GitError('select at least one conflicted file', 400)
-    if (requested.length > 200) throw new GitError('too many files in one operation', 400)
 
     const entries = await this.data.status(root)
     const conflicted = new Set(entries.filter((entry) => entry.conflict).map((entry) => entry.path))

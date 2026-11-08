@@ -14,10 +14,12 @@ export interface ChangeDir {
   files: StatusEntry[]
   /** Descendant file count, including files in child directories. */
   total: number
+  /** Child directory lookup, so wide directories build in linear time. */
+  index: Map<string, ChangeDir>
 }
 
 function makeDir(name: string, path: string): ChangeDir {
-  return { name, path, dirs: [], files: [], total: 0 }
+  return { name, path, dirs: [], files: [], total: 0, index: new Map() }
 }
 
 function byName(a: { name: string }, b: { name: string }): number {
@@ -45,10 +47,11 @@ export function buildChangeTree(entries: StatusEntry[]): ChangeDir {
     let path = ''
     for (let index = 0; index < parts.length - 1; index += 1) {
       path = path ? `${path}/${parts[index]}` : parts[index]
-      let next = node.dirs.find((dir) => dir.name === parts[index])
+      let next = node.index.get(parts[index])
       if (!next) {
         next = makeDir(parts[index], path)
         node.dirs.push(next)
+        node.index.set(parts[index], next)
       }
       node = next
     }
@@ -87,4 +90,23 @@ export function collectSelected(dir: ChangeDir, selected: Set<string>): number {
   }
   visit(dir)
   return count
+}
+
+/**
+ * Selected file count for every directory, computed in one post-order pass.
+ * @param root - synthetic root.
+ * @param selected - selected path set.
+ * @returns counts keyed by directory node.
+ */
+export function countSelectedByDir(root: ChangeDir, selected: Set<string>): Map<ChangeDir, number> {
+  const counts = new Map<ChangeDir, number>()
+  const visit = (node: ChangeDir): number => {
+    let count = 0
+    for (const file of node.files) if (selected.has(file.path)) count += 1
+    for (const child of node.dirs) count += visit(child)
+    counts.set(node, count)
+    return count
+  }
+  visit(root)
+  return counts
 }

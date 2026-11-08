@@ -75,6 +75,8 @@ export interface RepoState {
   unborn: boolean
   operation: string
   upstream: string
+  /** Full upstream ref (`refs/remotes/<remote>/<branch>`), or ''. */
+  upstreamRef: string
   ahead: number
   behind: number
 }

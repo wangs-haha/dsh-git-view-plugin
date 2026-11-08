@@ -12,6 +12,7 @@ import { GitData } from './data.js'
 import { GitError } from './errors.js'
 import { GitRunner, LIMITS } from './exec.js'
 import { GitOps } from './ops.js'
+import { repoPath, repoPaths } from './paths.js'
 import { RemoteService } from './remote.js'
 import { RepoResolver } from './repo.js'
 import type {
@@ -81,25 +82,14 @@ function boundedInt(raw: string | null, fallback: number, max: number): number {
 }
 
 /**
- * Normalize and validate a repository-relative scope path.
- * @param raw - query value, '' for the repository root.
- * @returns the clean path.
+ * Validate a repository-relative scope path ('' is the repository root).
+ * The path is never trimmed or rewritten: a directory with a leading space is
+ * a different directory.
+ * @param raw - query value.
+ * @returns the path, unchanged.
  */
 function cleanScope(raw: string | null): string {
-  const original = String(raw || '').trim()
-  if (original.startsWith('/') || original.startsWith('\\') || /^[a-zA-Z]:[\\/]/.test(original)) {
-    throw new GitError('invalid path', 400)
-  }
-  let value = original.replace(/\\/g, '/')
-  value = value.replace(/^\/+/, '').replace(/\/+$/, '')
-  if (!value) return ''
-  if (value.length > 4096 || /[\0-\x1f]/.test(value) || value.includes(':')) {
-    throw new GitError('invalid path', 400)
-  }
-  if (value.split('/').some((part) => part === '' || part === '.' || part === '..')) {
-    throw new GitError('invalid path', 400)
-  }
-  return value
+  return repoPath(raw ?? '', { allowEmpty: true, label: 'path' })
 }
 
 /**
@@ -302,9 +292,9 @@ export class GitViewRoutes {
 
       if (action === 'diff') {
         const hash = (url.searchParams.get('hash') || '').trim()
-        const path = cleanScope(url.searchParams.get('path'))
         if (!/^[0-9a-f]{4,64}$/i.test(hash)) throw new GitError('invalid commit hash', 400)
-        if (!path) throw new GitError('invalid file path', 400)
+        // A diff identifies exactly one file, so the path must stay byte-exact.
+        const path = repoPath(url.searchParams.get('path'), { label: 'file path' })
         const payload = await this.data.diff(repo.root, hash, path)
         return jsonResponse({ repo, hash, ...payload })
       }
@@ -529,12 +519,7 @@ export class GitViewRoutes {
    * @returns unique, validated repository-relative paths.
    */
   private collectPaths(body: Record<string, unknown>): string[] {
-    if (!Array.isArray(body.paths)) return []
-    return [
-      ...new Set(
-        (body.paths as unknown[]).map((value) => cleanScope(String(value || ''))).filter(Boolean),
-      ),
-    ]
+    return repoPaths(body.paths, MAX_PATHS)
   }
 
   /**

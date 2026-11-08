@@ -121,6 +121,8 @@ interface TreePayload {
 /** Result of the `status` read action. */
 interface StatusPayload {
   entries: StatusEntry[]
+  head?: { branch: string; hash: string; detached: boolean }
+  state?: RepoState
 }
 
 /** Result of the `commit` write action. */
@@ -260,11 +262,27 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
   const [rollbackError, setRollbackError] = React.useState('')
   const [commitMenu, setCommitMenu] = React.useState<CommitMenuState | null>(null)
   const [remoteJob, setRemoteJob] = React.useState<RemoteSnapshot | null>(null)
+  const [remoteRepo, setRemoteRepo] = React.useState('')
   const remoteClearTimer = React.useRef<number | null>(null)
   const runnerRef = React.useRef<RemoteRunner | null>(null)
+  const remoteAbortRef = React.useRef<AbortController | null>(null)
   const [commitBusy, setCommitBusy] = React.useState(false)
   const [commitAiBusy, setCommitAiBusy] = React.useState(false)
   const [commitError, setCommitError] = React.useState('')
+
+  // A write operation's returned state, kept in sync with the status poll. The
+  // log also carries a state, but it is only re-read on explicit refreshes.
+  const [repoState, setRepoState] = React.useState<RepoState | null>(null)
+
+  // Repository identity for async ownership checks: a response that started in
+  // another repository must never land in the current one.
+  const repoEpoch = React.useRef(0)
+  const repoIdRef = React.useRef('')
+  const refValueRef = React.useRef('')
+  const draftRevision = React.useRef(0)
+  const headSyncRef = React.useRef('')
+  const selectedPathsRef = React.useRef<string[]>([])
+  const remoteActiveRef = React.useRef(false)
 
   const [actionDialog, setActionDialog] = React.useState<DialogConfig | null>(null)
   const [actionBusy, setActionBusy] = React.useState(false)
@@ -355,19 +373,33 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
     setCommitError('')
   }, [])
 
+  React.useEffect(() => {
+    repoIdRef.current = repoId
+  }, [repoId])
+
+  React.useEffect(() => {
+    refValueRef.current = refValue
+  }, [refValue])
+
   const selectRepo = React.useCallback(
     (next: string) => {
+      repoEpoch.current += 1
+      headSyncRef.current = ''
+      repoIdRef.current = next
       setRepoId(next)
       setRefValue('')
       setLog(null)
       setLogError('')
+      setRepoState(null)
       setChanges(null)
       setChangesError('')
       setChangesLoading(false)
       setDeselectedChanges(new Set())
+      draftRevision.current += 1
       setCommitMessage('')
-        setCommitError('')
+      setCommitError('')
       setCommitBusy(false)
+      setActionBusy(false)
       setActionDialog(null)
       setActionError('')
       notices.clear()
@@ -388,12 +420,15 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
   }, [])
 
   const loadTree = React.useCallback(
-    async (path: string, options: { force?: boolean } = {}): Promise<void> => {
+    async (path: string, options: { force?: boolean; generation?: number } = {}): Promise<void> => {
       if (!repoId) return
+      const generation = options.generation ?? treeGeneration.current
+      // A batch refresh captured an older generation: stop before starting the
+      // next request, not only after it returns.
+      if (generation !== treeGeneration.current) return
       if (treeLoadingRef.current.has(path)) return
       const force = options.force === true
       if (!force && path && treeChildrenRef.current[path]) return
-      const generation = treeGeneration.current
       treeLoadingRef.current.add(path)
       setTreeLoading((previous) => new Set(previous).add(path))
       setTreeErrors((previous) => {
@@ -435,12 +470,25 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
 
   const refreshTree = React.useCallback(async (): Promise<void> => {
     if (!repoId) return
+    const generation = treeGeneration.current
+    const repo = repoId
+    const ref = refValue
     const paths = new Set<string>([''])
     for (const key of Object.keys(treeChildrenRef.current)) {
-      if (key) paths.add(key)
+      // Collapsed directories are refreshed lazily when they are reopened.
+      if (key && treeExpanded.has(key)) paths.add(key)
     }
-    for (const path of paths) await loadTree(path, { force: true })
-  }, [repoId, loadTree])
+    for (const path of paths) {
+      if (
+        generation !== treeGeneration.current ||
+        repoIdRef.current !== repo ||
+        refValueRef.current !== ref
+      ) {
+        return
+      }
+      await loadTree(path, { force: true, generation })
+    }
+  }, [repoId, refValue, treeExpanded, loadTree])
 
   React.useEffect(() => {
     const controller = new AbortController()
@@ -540,6 +588,10 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         if (controller.signal.aborted) return
         const entries = Array.isArray(payload.entries) ? payload.entries : []
         setChanges(entries)
+        // The status route also reports head/state; consuming it keeps the
+        // branch, operation banner, and ahead/behind counts current even when
+        // the change happened outside this panel.
+        if (payload.state) setRepoState(payload.state)
         setChangesLoading(false)
         setDeselectedChanges((previous) => {
           if (previous.size === 0) return previous
@@ -576,6 +628,9 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
     const controller = new AbortController()
     setLoadingDetails(true)
     setDetailsError('')
+    // Keep a detail that already belongs to this commit (background refreshes),
+    // but never keep one from another commit.
+    setDetails((previous) => (previous && previous.hash === selected ? previous : null))
     const params: Record<string, string | number | undefined> = { repo: repoId, hash: selected }
     if (scope) params.path = scope
     api
@@ -653,6 +708,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
 
   React.useEffect(
     () => () => {
+      remoteAbortRef.current?.abort()
       if (copyTimer.current !== null) window.clearTimeout(copyTimer.current)
       if (remoteClearTimer.current !== null) window.clearTimeout(remoteClearTimer.current)
     },
@@ -735,6 +791,12 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
     () => commits.find((commit) => commit.hash === selected) || null,
     [commits, selected],
   )
+  // Render only details that belong to the selected commit; a response for the
+  // previous selection must not be clickable under the new one.
+  const visibleDetails = React.useMemo(
+    () => (details && selected && details.hash === selected ? details : null),
+    [details, selected],
+  )
   const repo = React.useMemo(
     () => (repos || []).find((entry) => entry.id === repoId) || null,
     [repos, repoId],
@@ -748,6 +810,10 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
     [visibleChanges, deselectedChanges],
   )
   const selectedChangeSet = React.useMemo(() => new Set(selectedChangePaths), [selectedChangePaths])
+
+  React.useEffect(() => {
+    selectedPathsRef.current = selectedChangePaths
+  }, [selectedChangePaths])
 
   const copyHash = React.useCallback(async (hash: string): Promise<void> => {
     try {
@@ -821,10 +887,13 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
 
   const openCompare = React.useCallback(
     (entry: CommitFile) => {
-      if (!selected) return
-      setCompare({ file: entry, hash: selected })
+      // The hash comes from the details the file was listed under, never from
+      // a newer selection.
+      const hash = visibleDetails?.hash || selected
+      if (!hash) return
+      setCompare({ file: entry, hash })
     },
-    [selected],
+    [visibleDetails, selected],
   )
 
   const closeCompare = React.useCallback(() => {
@@ -877,6 +946,12 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
     setChangesTick((value) => value + 1)
   }, [])
 
+  /** Update the draft and bump its revision so stale AI responses cannot apply. */
+  const updateCommitMessage = React.useCallback((value: string) => {
+    draftRevision.current += 1
+    setCommitMessage(value)
+  }, [])
+
   const performCommit = React.useCallback(async (): Promise<void> => {
     if (!repoId || commitBusy) return
     if (selectedChangePaths.length === 0) {
@@ -896,6 +971,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         paths: selectedChangePaths,
         message: commitMessage,
       })
+      draftRevision.current += 1
       setCommitMessage('')
       setDeselectedChanges(new Set())
       setSelected('')
@@ -906,6 +982,9 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
       setChangesTick((value) => value + 1)
     } catch (error) {
       setCommitError('')
+      // `git add` may have run before the commit itself failed (for example a
+      // rejected pre-commit hook), so re-read the real index state.
+      setChangesTick((value) => value + 1)
       reportError('commit', error)
     } finally {
       setCommitBusy(false)
@@ -922,17 +1001,29 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
       setCommitError(translate('commitSelectRequired'))
       return
     }
+    const epoch = repoEpoch.current
+    const repo = repoId
+    const revision = draftRevision.current
+    const selection = selectedChangePaths.join('\n')
     setCommitAiBusy(true)
     setCommitError('')
     try {
       const payload = await api.write<MessagePayload>({
-        repo: repoId,
+        repo,
         action: 'message',
         paths: selectedChangePaths,
         locale: uiLocale(),
       })
+      // The repository changed while the model was working: drop the result.
+      if (repoEpoch.current !== epoch || repoIdRef.current !== repo) return
       const draft = typeof payload.message === 'string' ? payload.message : ''
-      setCommitMessage(draft)
+      // The user typed (or committed) meanwhile: keep their text and say so
+      // instead of overwriting it.
+      if (draftRevision.current !== revision || selectedPathsRef.current.join('\n') !== selection) {
+        notices.show(translate('draftOutdated'), 'ok')
+        return
+      }
+      updateCommitMessage(draft)
       window.requestAnimationFrame(() => {
         const node = messageRef.current
         if (!node) return
@@ -945,12 +1036,13 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
         }
       })
     } catch (error) {
+      if (repoEpoch.current !== epoch) return
       setCommitError('')
       reportError('ai', error)
     } finally {
       setCommitAiBusy(false)
     }
-  }, [repoId, commitBusy, commitAiBusy, selectedChangePaths, translate, api, reportError])
+  }, [repoId, commitBusy, commitAiBusy, selectedChangePaths, translate, api, reportError, notices, updateCommitMessage])
 
   const commitSelected = React.useCallback(() => {
     void performCommit()
@@ -966,26 +1058,48 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
   /**
    * Start one remote operation and follow it through {@link RemoteRunner}.
    * The progress strip shows git's last output line and percentage while it
-   * runs.
+   * runs. The session is tagged with the repository it started in so a later
+   * switch cannot retarget the polling or clear another operation's state.
    * @param op - fetch, pull, or push.
    * @param options - rebase / force-with-lease.
    */
   const runRemote = React.useCallback(
     async (op: RemoteOp, options: Record<string, boolean> = {}): Promise<void> => {
       if (!repoId) return
+      if (remoteActiveRef.current) return
+      if (remoteJob && (remoteJob.state === 'running' || remoteJob.state === 'cancelling')) return
+      remoteActiveRef.current = true
+      const epoch = repoEpoch.current
+      const repo = repoId
+      const controller = new AbortController()
+      remoteAbortRef.current?.abort()
+      remoteAbortRef.current = controller
+      if (remoteClearTimer.current !== null) {
+        window.clearTimeout(remoteClearTimer.current)
+        remoteClearTimer.current = null
+      }
       setActionBusy(true)
       setActionError('')
       let started = false
       const runner = new RemoteRunner(api, (snapshot: RemoteSnapshot) => {
+        if (controller.signal.aborted) return
         started = true
+        setRemoteRepo(repo)
         setRemoteJob(snapshot)
-        setActionBusy(false)
-        setActionDialog(null)
+        if (repoEpoch.current === epoch) {
+          setActionBusy(false)
+          setActionDialog(null)
+        }
       })
       runnerRef.current = runner
       try {
-        const start = await runner.start(repoId, op, options)
+        const start = await runner.start(repo, op, options)
+        if (controller.signal.aborted || repoEpoch.current !== epoch) {
+          void runner.cancel()
+          return
+        }
         started = true
+        setRemoteRepo(repo)
         setActionBusy(false)
         setActionDialog(null)
         setRemoteJob({
@@ -1000,33 +1114,47 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
           startedAt: Date.now(),
           endedAt: null,
         })
-        const snapshot = await runner.poll(repoId, start.id)
+        const snapshot = await runner.poll(start.id, controller.signal)
+        if (controller.signal.aborted) return
         runner.clear()
-        setActionBusy(false)
-        if (snapshot.state === 'done') {
-          showRepoNotice(translate(remoteDoneKey(op)))
-          refresh()
-          setChangesTick((value) => value + 1)
-        } else if (snapshot.state === 'cancelled') {
-          showRepoNotice(translate('remoteCancelled'))
-        } else {
-          reportMessage('remote', snapshot.error || translate('remoteFailed'), (snapshot.lines || []).join('\n'))
+        const current = repoEpoch.current === epoch
+        if (current) {
+          setActionBusy(false)
+          if (snapshot.state === 'done') {
+            showRepoNotice(translate(remoteDoneKey(op)))
+            refresh()
+            setChangesTick((value) => value + 1)
+          } else if (snapshot.state === 'cancelled') {
+            showRepoNotice(translate('remoteCancelled'))
+          } else {
+            reportMessage('remote', snapshot.error || translate('remoteFailed'), (snapshot.lines || []).join('\n'))
+          }
         }
         if (remoteClearTimer.current !== null) window.clearTimeout(remoteClearTimer.current)
-        remoteClearTimer.current = window.setTimeout(() => setRemoteJob(null), REMOTE_STRIP_MS)
+        remoteClearTimer.current = window.setTimeout(() => {
+          setRemoteJob(null)
+          setRemoteRepo('')
+        }, REMOTE_STRIP_MS)
       } catch (error) {
-        setActionBusy(false)
         if (isAbort(error)) return
+        runner.clear()
+        if (repoEpoch.current !== epoch) return
+        setActionBusy(false)
         if (!started) {
           reportError('remote', error)
           return
         }
         setRemoteJob((previous) => remoteErrorSnapshot(previous, op, errorText(error)))
-        runner.clear()
         reportError('remote', error)
+      } finally {
+        remoteActiveRef.current = false
+        if (remoteAbortRef.current === controller) remoteAbortRef.current = null
+        // A later operation may own the busy flag now; only clear it when this
+        // session is still the current one.
+        if (runnerRef.current === runner) setActionBusy(false)
       }
     },
-    [repoId, api, translate, showRepoNotice, refresh, reportError, reportMessage],
+    [repoId, remoteJob, api, translate, showRepoNotice, refresh, reportError, reportMessage],
   )
 
   /**
@@ -1045,9 +1173,13 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
   )
 
   const cancelRemoteJob = React.useCallback(() => {
-    if (!repoId || !remoteJob || remoteJob.state !== 'running') return
-    void runnerRef.current?.cancel(repoId)
-  }, [repoId, remoteJob])
+    if (!remoteJob || (remoteJob.state !== 'running' && remoteJob.state !== 'cancelling')) return
+    const runner = runnerRef.current
+    if (!runner) return
+    void runner.cancel().then((ok) => {
+      if (!ok) reportMessage('remote', translate('remoteCancelFailed'))
+    })
+  }, [remoteJob, translate, reportMessage])
 
   const executeBranchOp = React.useCallback(
     async (op: string, payload: Record<string, unknown>): Promise<boolean> => {
@@ -1357,7 +1489,18 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
     if (!refValue || !log || !Array.isArray(log.refs)) return null
     return log.refs.find((entry) => entry.ref === refValue) || null
   }, [log, refValue])
-  const branchState = log && log.state ? log.state : null
+  const branchState = repoState ?? (log && log.state ? log.state : null)
+
+  // The status poll is the freshest source of head/refs changes. Refresh the
+  // history only when HEAD actually moved, not on every poll.
+  React.useEffect(() => {
+    if (!repoState || !log) return
+    if (repoState.branch === log.head.branch && repoState.hash === log.head.hash) return
+    const key = `${repoState.branch}|${repoState.hash}|${log.head.branch}|${log.head.hash}`
+    if (headSyncRef.current === key) return
+    headSyncRef.current = key
+    setReloadTick((value) => value + 1)
+  }, [repoState, log])
 
   /**
    * Actions for one branch row in the ref dropdown: browse (single click)
@@ -1620,7 +1763,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
           setRollbackError('')
           setRollbackOpen(true)
         },
-        onMessage: setCommitMessage,
+        onMessage: updateCommitMessage,
         onCommit: commitSelected,
         onGenerate: generateMessage,
         onDiscard: requestDiscard,
@@ -1671,7 +1814,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
     h(DetailsPane, {
       t: translate,
       commit: selectedCommit,
-      details,
+      details: visibleDetails,
       loading: loadingDetails,
       error: detailsError,
       copied,
@@ -1767,7 +1910,9 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
       matchCount: matches ? matches.size : null,
       onRefresh: refresh,
       sync: branchState,
-      syncBusy: actionBusy || Boolean(remoteJob && remoteJob.state === 'running'),
+      syncBusy:
+        actionBusy ||
+        Boolean(remoteJob && (remoteJob.state === 'running' || remoteJob.state === 'cancelling')),
       onFetch: () => requestRemote('fetch'),
       onPull: (rebase: boolean) => requestRemote('pull', rebase ? { rebase: true } : {}),
       onPush: (force: boolean) => requestRemote('push', force ? { forceWithLease: true } : {}),
@@ -1780,7 +1925,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
           onClose: () => notices.clear(),
         })
       : null,
-    remoteJob
+    remoteJob && remoteRepo === repoId
       ? h(
           'div',
           { className: `gv-remote gv-remote-${remoteJob.state}` },
@@ -1802,7 +1947,7 @@ export function GitViewPanel({ t }: { t?: Translate }): React.ReactElement {
               ? remoteJob.lines[remoteJob.lines.length - 1]
               : remoteJob.error || translate('remoteRunning'),
           ),
-          remoteJob.state === 'running'
+          remoteJob.state === 'running' || remoteJob.state === 'cancelling'
             ? h(
                 'button',
                 { type: 'button', className: 'gv-remote-cancel', onClick: cancelRemoteJob },

@@ -34,18 +34,38 @@ var LIMITS = Object.freeze({
   diff: 4e5
 });
 var CONFIG_ARGS = ["-c", "core.quotepath=false", "-c", "color.ui=false", "-c", "core.pager=cat"];
+var UNSAFE_INHERITED_ENV = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_COMMON_DIR",
+  "GIT_PREFIX"
+];
 var GIT_ENV = {
   GIT_OPTIONAL_LOCKS: "0",
   GIT_TERMINAL_PROMPT: "0",
-  GIT_LITERAL_PATHSPECS: "1"
+  GIT_LITERAL_PATHSPECS: "1",
+  // A command that would open an editor must fail or keep its message instead
+  // of waiting for a terminal that will never appear.
+  GIT_EDITOR: "true",
+  GIT_SEQUENCE_EDITOR: "true"
 };
 var STREAM_ENV = {
   GIT_TERMINAL_PROMPT: "0",
   GIT_OPTIONAL_LOCKS: "0",
   GIT_PAGER: "cat",
+  GIT_EDITOR: "true",
+  GIT_SEQUENCE_EDITOR: "true",
   LC_ALL: "C",
   LANG: "C"
 };
+function commandEnv(overrides) {
+  const env = { ...process.env };
+  for (const key of UNSAFE_INHERITED_ENV) delete env[key];
+  return { ...env, ...overrides };
+}
 function failure(result) {
   if (result.spawnError && result.spawnError.code === "ENOENT") {
     return new GitError("git executable not found on PATH", 503);
@@ -70,7 +90,7 @@ var GitRunner = class {
         [...CONFIG_ARGS, ...args],
         {
           cwd,
-          env: { ...process.env, ...GIT_ENV },
+          env: commandEnv(GIT_ENV),
           windowsHide: true,
           timeout: options.timeout ?? TIMEOUT_MS,
           maxBuffer: options.maxBuffer ?? MAX_BUFFER,
@@ -115,11 +135,38 @@ var GitRunner = class {
   spawn(cwd, args, env = {}) {
     return spawnProcess("git", [...args], {
       cwd,
-      env: { ...process.env, ...STREAM_ENV, ...env },
+      env: commandEnv({ ...STREAM_ENV, ...env }),
       windowsHide: true
     });
   }
 };
+
+// src/host/paths.ts
+var MAX_PATH_LENGTH = 4096;
+function repoPath(raw, options = {}) {
+  const label = options.label ?? "file path";
+  if (typeof raw !== "string") throw new GitError(`invalid ${label}`, 400);
+  if (raw === "") {
+    if (options.allowEmpty) return "";
+    throw new GitError(`invalid ${label}`, 400);
+  }
+  const invalid = raw.length > MAX_PATH_LENGTH || raw.includes("\0") || raw.startsWith("/") || raw.startsWith("\\") || /^[a-zA-Z]:[\\/]/.test(raw) || raw.split("/").some((part) => part === "" || part === "." || part === "..");
+  if (invalid) throw new GitError(`invalid ${label}`, 400);
+  return raw;
+}
+function repoPaths(raw, max = 200) {
+  if (!Array.isArray(raw)) return [];
+  const unique = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const value of raw) {
+    const path = repoPath(value);
+    if (seen.has(path)) continue;
+    seen.add(path);
+    unique.push(path);
+  }
+  if (unique.length > max) throw new GitError("too many files in one operation", 400);
+  return unique;
+}
 
 // src/host/data.ts
 var GitData = class {
@@ -434,8 +481,26 @@ var GitData = class {
     const message = bodyParts.join("").replace(/\s+$/, "").slice(0, LIMITS.message);
     const subject = message.split(/\r?\n/, 1)[0] || "";
     const [statusOut, numstatOut] = await Promise.all([
-      this.runner.run(root, ["show", "--format=", "--name-status", "--diff-merges=first-parent", "--no-renames", hash, "--"]),
-      this.runner.run(root, ["show", "--format=", "--numstat", "--diff-merges=first-parent", "--no-renames", hash, "--"])
+      this.runner.run(root, [
+        "show",
+        "--format=",
+        "--name-status",
+        "--diff-merges=first-parent",
+        "--no-renames",
+        hash,
+        "--",
+        ...path ? [path] : []
+      ]),
+      this.runner.run(root, [
+        "show",
+        "--format=",
+        "--numstat",
+        "--diff-merges=first-parent",
+        "--no-renames",
+        hash,
+        "--",
+        ...path ? [path] : []
+      ])
     ]);
     const stats = /* @__PURE__ */ new Map();
     for (const line of numstatOut.split("\n")) {
@@ -460,10 +525,6 @@ var GitData = class {
       const stat = stats.get(filePath) || { additions: 0, deletions: 0, binary: false };
       files.push({ status: status.charAt(0), path: filePath, ...stat });
       if (files.length >= LIMITS.files) break;
-    }
-    if (path) {
-      const prefix = `${path}/`;
-      files = files.filter((entry) => entry.path === path || entry.path.startsWith(prefix));
     }
     files.sort((a, b) => a.path.localeCompare(b.path));
     return {
@@ -545,7 +606,7 @@ var GitData = class {
    * @returns diff text.
    */
   async workingSummary(root, paths, all) {
-    const targets = all ? [] : (paths || []).filter(Boolean);
+    const targets = all ? [] : (paths || []).filter((value) => typeof value === "string" && value !== "");
     const suffix = targets.length > 0 ? ["--", ...targets] : [];
     const [staged, unstaged] = await Promise.all([
       this.runner.run(root, ["diff", "--cached", "--no-ext-diff", "--unified=2", ...suffix], { maxBuffer: 16 * 1024 * 1024 }),
@@ -576,13 +637,11 @@ ${unstaged.trim()}`);
     if (text.includes("\0")) throw new GitError("commit message contains an invalid character", 400);
     if (text.length > 5e3) throw new GitError("commit message is too long", 400);
     if (!all) {
-      const targets = [...new Set((paths || []).map((value) => String(value || "").trim()).filter(Boolean))];
+      const targets = [...new Set((paths || []).filter((value) => typeof value === "string" && value !== ""))];
       if (targets.length === 0) throw new GitError("select at least one changed file", 400);
       if (targets.length > 200) throw new GitError("too many files in one commit", 400);
       for (const target of targets) {
-        if (target.startsWith("/") || target.includes("\0") || target.split("/").some((part) => part === "..")) {
-          throw new GitError("invalid file path", 400);
-        }
+        repoPath(target);
       }
       const indexed = new Set(
         (await this.runner.run(root, ["ls-files", "-z", "--"])).split("\0").filter(Boolean)
@@ -722,16 +781,23 @@ var GitOps = class {
     else if (has("REVERT_HEAD")) operation = "revert";
     else if (has("BISECT_LOG")) operation = "bisect";
     let upstream = "";
+    let upstreamRef = "";
     let ahead = 0;
     let behind = 0;
     if (head.branch) {
       try {
         upstream = (await this.data.run(root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"])).trim();
+        try {
+          upstreamRef = (await this.data.run(root, ["rev-parse", "--symbolic-full-name", "@{upstream}"])).trim();
+        } catch {
+          upstreamRef = "";
+        }
         const counts = (await this.data.run(root, ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"])).trim().split(/\s+/);
         behind = Number.parseInt(counts[0], 10) || 0;
         ahead = Number.parseInt(counts[1], 10) || 0;
       } catch {
         upstream = "";
+        upstreamRef = "";
         ahead = 0;
         behind = 0;
       }
@@ -743,6 +809,7 @@ var GitOps = class {
       unborn: Boolean(head.branch && !head.hash),
       operation,
       upstream,
+      upstreamRef,
       ahead,
       behind
     };
@@ -791,15 +858,6 @@ var GitOps = class {
       result = await this.data.runResult(root, ["branch", name, ...suffix]);
     }
     if (result.code !== 0) {
-      if (wantCheckout) {
-        try {
-          const head = await this.data.head(root);
-          if (head.branch !== name && await this.findLocalBranch(root, name)) {
-            await this.data.runResult(root, ["branch", "-D", name]);
-          }
-        } catch {
-        }
-      }
       throw writeFailure(result, "could not create the branch");
     }
     return {
@@ -941,11 +999,8 @@ var GitOps = class {
    */
   async discardChanges(root, rawPaths, options = {}) {
     const deleteAdded = options.deleteAdded !== false;
-    const requested = [
-      ...new Set((Array.isArray(rawPaths) ? rawPaths : []).map((value) => String(value || "").trim()).filter(Boolean))
-    ];
+    const requested = repoPaths(rawPaths);
     if (requested.length === 0) throw new GitError("select at least one changed file", 400);
-    if (requested.length > 200) throw new GitError("too many files in one operation", 400);
     const entries = await this.data.status(root);
     const byPath = new Map(entries.map((entry) => [entry.path, entry]));
     const found = requested.map((path) => byPath.get(path)).filter((entry) => entry !== void 0);
@@ -1050,7 +1105,15 @@ var GitOps = class {
       const parents2 = await this.resolveParents(root, "HEAD");
       if (parents2.length > 1) throw new GitError("cannot undo a merge commit — revert it instead", 409);
       if (parents2.length === 0) {
-        const output2 = await this.runWrite(root, ["update-ref", "-d", "HEAD"], "could not undo the first commit");
+        if (!head.branch) {
+          throw new GitError("cannot undo the root commit while HEAD is detached", 409);
+        }
+        const branchRef = `refs/heads/${assertBranchName(head.branch)}`;
+        const output2 = await this.runWrite(
+          root,
+          ["update-ref", "-d", branchRef, head.hash],
+          "could not undo the first commit"
+        );
         return { op: "undo", from: head.hash, to: null, output: output2 };
       }
       const output = await this.runWrite(root, ["reset", "--soft", parents2[0], "--"], "could not undo the last commit");
@@ -1088,11 +1151,8 @@ var GitOps = class {
    * @returns operation result.
    */
   async stageResolvedPaths(root, rawPaths) {
-    const requested = [
-      ...new Set((Array.isArray(rawPaths) ? rawPaths : []).map((value) => String(value || "").trim()).filter(Boolean))
-    ];
+    const requested = repoPaths(rawPaths);
     if (requested.length === 0) throw new GitError("select at least one conflicted file", 400);
-    if (requested.length > 200) throw new GitError("too many files in one operation", 400);
     const entries = await this.data.status(root);
     const conflicted = new Set(entries.filter((entry) => entry.conflict).map((entry) => entry.path));
     const paths = requested.filter((path) => conflicted.has(path));
@@ -1219,9 +1279,21 @@ function assertSafeArg(value, label) {
   if (!text || text.startsWith("-")) throw new GitError(`invalid ${label}`, 400);
   return text;
 }
+function parseUpstream(upstreamRef, remotes) {
+  const prefix = "refs/remotes/";
+  if (!upstreamRef.startsWith(prefix)) return null;
+  const rest = upstreamRef.slice(prefix.length);
+  const matches = remotes.filter((remote) => rest.startsWith(`${remote}/`)).sort((a, b) => b.length - a.length);
+  for (const remote of matches) {
+    const branch = rest.slice(remote.length + 1);
+    if (branch && branch !== "HEAD") return { remote, branch };
+  }
+  return null;
+}
 function buildRemoteCommand(op, context = {}, options = {}) {
   const branch = String(context.branch || "").trim();
   const upstream = String(context.upstream || "").trim();
+  const upstreamRef = String(context.upstreamRef || "").trim();
   const remotes = Array.isArray(context.remotes) ? context.remotes.filter((name) => typeof name === "string" && name) : [];
   if (op === "fetch") {
     return { args: ["fetch", "--all", "--prune", "--progress"], label: "fetch" };
@@ -1238,12 +1310,21 @@ function buildRemoteCommand(op, context = {}, options = {}) {
     const args = ["push", "--progress"];
     if (options.forceWithLease) args.push("--force-with-lease");
     if (options.tags) args.push("--follow-tags");
-    const remote = remotes.includes("origin") ? "origin" : remotes[0];
-    if (!upstream) {
-      const name = assertSafeArg(branch || "HEAD", "branch name");
-      args.push("--set-upstream", remote, name);
+    if (upstream) {
+      const target = parseUpstream(upstreamRef, remotes);
+      if (!target) {
+        throw new GitError(
+          "cannot determine the upstream remote — push once from a terminal to repair the tracking ref",
+          409
+        );
+      }
+      args.push(target.remote, `HEAD:refs/heads/${target.branch}`);
+      return { args, label: `push ${target.remote}/${target.branch}` };
     }
-    return { args, label: upstream ? `push ${upstream}` : `push ${remote}` };
+    const remote = remotes.includes("origin") ? "origin" : remotes[0];
+    const name = assertSafeArg(branch || "HEAD", "branch name");
+    args.push("--set-upstream", remote, name);
+    return { args, label: `push ${remote}/${name}` };
   }
   throw new GitError("unknown remote operation", 404);
 }
@@ -1266,12 +1347,15 @@ var RemoteCommandBuilder = Object.freeze({
 
 // src/host/remote.ts
 var REMOTE_TIMEOUT_MS = 10 * 60 * 1e3;
+var REMOTE_KILL_GRACE_MS = 15e3;
+var REMOTE_DISPOSE_WAIT_MS = 3e3;
 var REMOTE_KEEP_MS = 10 * 60 * 1e3;
 var MAX_LINES = 200;
 var SNAPSHOT_LINES = 40;
 var RemoteService = class {
   jobs = /* @__PURE__ */ new Map();
   sequence = 0;
+  disposing = false;
   data;
   ops;
   lock;
@@ -1284,117 +1368,128 @@ var RemoteService = class {
   }
   /**
    * Start `git fetch|pull|push` as a job and stream its output into the job
-   * record. The per-repository write lock is held until the job settles.
+   * record. The per-repository write lock is held from before the state read
+   * until the job settles.
    * @param repo - resolved repository.
    * @param body - parsed request body (`op`, `rebase`, `forceWithLease`, `tags`).
    * @returns `{ ok, id, op, label }`.
    */
   async start(repo, body) {
+    if (this.disposing) throw new GitError("the Git plugin is shutting down", 503);
     const op = assertRemoteOp(body.op);
-    const [state, remotes] = await Promise.all([this.ops.state(repo.root), this.data.remotes(repo.root)]);
-    const { args, label } = buildRemoteCommand(
-      op,
-      {
-        branch: state.branch,
-        upstream: state.upstream,
-        detached: state.detached,
-        remotes
-      },
-      {
-        rebase: body.rebase === true,
-        forceWithLease: body.forceWithLease === true,
-        tags: body.tags === true
-      }
-    );
     const release = this.lock.begin(repo.root);
-    this.prune();
-    const id = `remote-${++this.sequence}-${Date.now().toString(36)}`;
-    const job = {
-      id,
-      op,
-      label,
-      repo: repo.root,
-      state: "running",
-      startedAt: Date.now(),
-      endedAt: null,
-      percent: null,
-      exitCode: null,
-      error: "",
-      lines: [],
-      child: null,
-      release,
-      timer: null
-    };
-    this.jobs.set(id, job);
-    let child;
+    let job = null;
     try {
-      child = this.runner.spawn(repo.root, args);
-    } catch (error) {
-      release();
-      this.jobs.delete(id);
-      throw new GitError(error instanceof Error ? error.message : String(error), 502);
-    }
-    job.child = child;
-    const absorb = (chunk) => {
-      for (const raw of String(chunk).split(/[\r\n]+/)) {
-        const line = raw.trim();
-        if (!line) continue;
-        job.lines.push(line);
-        if (job.lines.length > MAX_LINES) job.lines.shift();
-        const match = /(\d{1,3})%/.exec(line);
-        if (match) job.percent = Math.max(job.percent || 0, Number(match[1]));
-      }
-    };
-    child.stdout?.on("data", absorb);
-    child.stderr?.on("data", absorb);
-    let settled = false;
-    const settle = (spawnError) => {
-      if (settled) return;
-      settled = true;
-      if (job.timer) clearTimeout(job.timer);
-      job.endedAt = Date.now();
-      job.exitCode = typeof child.exitCode === "number" ? child.exitCode : null;
-      if (spawnError) {
-        job.state = "error";
-        job.error = `无法启动 git：${spawnError.message}`;
-      } else if (job.state === "cancelling") {
-        job.state = "cancelled";
-      } else if (job.exitCode === 0) {
-        job.state = "done";
-        job.percent = 100;
-      } else {
-        job.state = "error";
-        job.error = remoteErrorText(job.lines.join("\n"));
-      }
-      job.child = null;
-      release();
-    };
-    child.on("error", (error) => settle(error));
-    child.on("close", () => settle(null));
-    job.timer = setTimeout(() => {
+      const [state, remotes] = await Promise.all([this.ops.state(repo.root), this.data.remotes(repo.root)]);
+      const { args, label } = buildRemoteCommand(
+        op,
+        {
+          branch: state.branch,
+          upstream: state.upstream,
+          upstreamRef: state.upstreamRef,
+          detached: state.detached,
+          remotes
+        },
+        {
+          rebase: body.rebase === true,
+          forceWithLease: body.forceWithLease === true,
+          tags: body.tags === true
+        }
+      );
+      this.prune();
+      const id = `remote-${++this.sequence}-${Date.now().toString(36)}`;
+      let resolveDone = () => void 0;
+      const done = new Promise((resolve2) => {
+        resolveDone = resolve2;
+      });
+      job = {
+        id,
+        op,
+        label,
+        repo: repo.root,
+        state: "running",
+        startedAt: Date.now(),
+        endedAt: null,
+        percent: null,
+        exitCode: null,
+        error: "",
+        lines: [],
+        child: null,
+        release,
+        watchdog: null,
+        stopTimer: null,
+        cancelRequested: false,
+        timeoutError: "",
+        settled: false,
+        done,
+        resolveDone
+      };
+      this.jobs.set(id, job);
+      let child;
       try {
-        child.kill();
-      } catch {
+        child = this.runner.spawn(repo.root, args);
+      } catch (error) {
+        throw new GitError(error instanceof Error ? error.message : String(error), 502);
       }
-      job.error = "网络操作超时（10 分钟）";
-      job.state = "error";
-    }, REMOTE_TIMEOUT_MS);
-    return { ok: true, id, op, label };
+      job.child = child;
+      const absorb = (chunk) => {
+        for (const raw of String(chunk).split(/[\r\n]+/)) {
+          const line = raw.trim();
+          if (!line) continue;
+          job.lines.push(line);
+          if (job.lines.length > MAX_LINES) job.lines.shift();
+          const match = /(\d{1,3})%/.exec(line);
+          if (match) job.percent = Math.max(job.percent || 0, Number(match[1]));
+        }
+      };
+      child.stdout?.on("data", absorb);
+      child.stderr?.on("data", absorb);
+      const current = job;
+      child.on("error", (error) => {
+        this.settle(current, {
+          state: "error",
+          error: `无法启动 git：${error.message}`
+        });
+      });
+      child.on("close", () => {
+        if (current.settled) return;
+        const exitCode = typeof child.exitCode === "number" ? child.exitCode : null;
+        current.exitCode = exitCode;
+        if (current.cancelRequested) {
+          this.settle(current, { state: "cancelled" });
+        } else if (current.timeoutError) {
+          this.settle(current, { state: "error", error: current.timeoutError });
+        } else if (exitCode === 0) {
+          current.percent = 100;
+          this.settle(current, { state: "done" });
+        } else {
+          this.settle(current, { state: "error", error: remoteErrorText(current.lines.join("\n")) });
+        }
+      });
+      current.watchdog = setTimeout(() => {
+        this.onDeadline(current);
+      }, REMOTE_TIMEOUT_MS);
+      return { ok: true, id, op, label };
+    } catch (error) {
+      if (job) this.jobs.delete(job.id);
+      release();
+      throw error;
+    }
   }
   /**
-   * Ask a running remote job to stop.
+   * Ask a running remote job to stop. Re-issuing the stop request is safe: it
+   * kills the child again if the first signal did not take effect.
    * @param id - job id.
    * @returns acknowledgement.
    */
   cancel(id) {
     const job = this.jobs.get(String(id || ""));
     if (!job) throw new GitError("unknown remote job", 404);
-    if (job.state !== "running") return { ok: true, id: job.id, state: job.state };
-    job.state = "cancelling";
-    try {
-      job.child?.kill();
-    } catch {
-    }
+    if (job.settled) return { ok: true, id: job.id, state: job.state };
+    job.cancelRequested = true;
+    if (!job.timeoutError) job.state = "cancelling";
+    this.killChild(job);
+    this.armForceSettle(job, "cancelled", job.error || "网络操作取消超时（进程未响应）");
     return { ok: true, id: job.id, state: job.state };
   }
   /**
@@ -1419,13 +1514,98 @@ var RemoteService = class {
     };
   }
   /**
+   * Stop every child, wait briefly for it to exit, then settle whatever is
+   * left. Called when the plugin is disposed so no process outlives its routes.
+   * @returns resolves when the jobs are settled or the wait expired.
+   */
+  async dispose() {
+    this.disposing = true;
+    const jobs = [...this.jobs.values()].filter((job) => !job.settled);
+    if (jobs.length === 0) {
+      this.jobs.clear();
+      return;
+    }
+    for (const job of jobs) this.killChild(job);
+    await Promise.race([
+      Promise.all(jobs.map((job) => job.done)),
+      new Promise((resolve2) => setTimeout(resolve2, REMOTE_DISPOSE_WAIT_MS))
+    ]);
+    for (const job of jobs) {
+      this.settle(job, { state: "cancelled", error: "插件已卸载，网络操作被取消" });
+    }
+    this.jobs.clear();
+  }
+  /**
+   * Timeout handler: stop the child and bound how long the lock may wait for it.
+   * @param job - running job.
+   */
+  onDeadline(job) {
+    if (job.settled) return;
+    if (job.cancelRequested) {
+      this.killChild(job);
+      this.armForceSettle(job, "cancelled", job.error || "网络操作取消超时（进程未响应）");
+      return;
+    }
+    job.timeoutError = "网络操作超时（10 分钟）";
+    job.state = "cancelling";
+    this.killChild(job);
+    this.armForceSettle(job, "error", job.timeoutError);
+  }
+  /**
+   * Settle a job after the child had a grace period to exit.
+   * @param job - job to settle.
+   * @param fallback - terminal state used when the child never reports close.
+   * @param message - error/notice attached to that state.
+   */
+  armForceSettle(job, fallback, message) {
+    if (job.stopTimer) return;
+    job.stopTimer = setTimeout(() => {
+      if (job.settled) return;
+      this.killChild(job, "SIGKILL");
+      this.settle(job, { state: fallback, error: message });
+    }, REMOTE_KILL_GRACE_MS);
+  }
+  /**
+   * Send a termination signal without throwing when the child is already gone.
+   * @param job - job whose child should stop.
+   * @param signal - signal to send (default SIGTERM).
+   * @returns whether the signal was delivered.
+   */
+  killChild(job, signal = "SIGTERM") {
+    try {
+      return job.child ? job.child.kill(signal) : false;
+    } catch {
+      return false;
+    }
+  }
+  /**
+   * The single terminal transition of a job: timers cleared, lock released,
+   * done promise resolved. Later calls are ignored.
+   * @param job - job to settle.
+   * @param outcome - terminal state and optional error text.
+   */
+  settle(job, outcome) {
+    if (job.settled) return;
+    job.settled = true;
+    if (job.watchdog) clearTimeout(job.watchdog);
+    if (job.stopTimer) clearTimeout(job.stopTimer);
+    job.watchdog = null;
+    job.stopTimer = null;
+    job.endedAt = Date.now();
+    job.child = null;
+    job.state = outcome.state;
+    if (outcome.error !== void 0) job.error = outcome.error;
+    job.resolveDone();
+    job.release();
+  }
+  /**
    * Drop finished jobs that nobody will poll anymore.
    * @returns nothing.
    */
   prune() {
     const now = Date.now();
     for (const [id, job] of this.jobs) {
-      if (job.endedAt && now - job.endedAt > REMOTE_KEEP_MS) this.jobs.delete(id);
+      if (job.settled && job.endedAt && now - job.endedAt > REMOTE_KEEP_MS) this.jobs.delete(id);
     }
   }
 };
@@ -1508,20 +1688,7 @@ function boundedInt(raw, fallback, max) {
   return Math.min(value, max);
 }
 function cleanScope(raw) {
-  const original = String(raw || "").trim();
-  if (original.startsWith("/") || original.startsWith("\\") || /^[a-zA-Z]:[\\/]/.test(original)) {
-    throw new GitError("invalid path", 400);
-  }
-  let value = original.replace(/\\/g, "/");
-  value = value.replace(/^\/+/, "").replace(/\/+$/, "");
-  if (!value) return "";
-  if (value.length > 4096 || /[\0-\x1f]/.test(value) || value.includes(":")) {
-    throw new GitError("invalid path", 400);
-  }
-  if (value.split("/").some((part) => part === "" || part === "." || part === "..")) {
-    throw new GitError("invalid path", 400);
-  }
-  return value;
+  return repoPath(raw ?? "", { allowEmpty: true, label: "path" });
 }
 function toRecord(value) {
   return value !== null && typeof value === "object" ? value : {};
@@ -1647,9 +1814,8 @@ var GitViewRoutes = class {
       }
       if (action === "diff") {
         const hash = (url.searchParams.get("hash") || "").trim();
-        const path = cleanScope(url.searchParams.get("path"));
         if (!/^[0-9a-f]{4,64}$/i.test(hash)) throw new GitError("invalid commit hash", 400);
-        if (!path) throw new GitError("invalid file path", 400);
+        const path = repoPath(url.searchParams.get("path"), { label: "file path" });
         const payload = await this.data.diff(repo.root, hash, path);
         return jsonResponse({ repo, hash, ...payload });
       }
@@ -1858,12 +2024,7 @@ var GitViewRoutes = class {
    * @returns unique, validated repository-relative paths.
    */
   collectPaths(body) {
-    if (!Array.isArray(body.paths)) return [];
-    return [
-      ...new Set(
-        body.paths.map((value) => cleanScope(String(value || ""))).filter(Boolean)
-      )
-    ];
+    return repoPaths(body.paths, MAX_PATHS);
   }
   /**
    * Ask the composed default model for one `type(scope): subject` line the user
@@ -2023,6 +2184,12 @@ function apply(ctx) {
       fetch: (request) => routes.write(request)
     }),
     "git-view: write route"
+  );
+  ctx.effect(
+    () => () => {
+      void remote.dispose();
+    },
+    "git-view: remote jobs"
   );
 }
 export {

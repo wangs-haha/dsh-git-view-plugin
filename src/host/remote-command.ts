@@ -16,6 +16,8 @@ export const REMOTE_OPS = Object.freeze(['fetch', 'pull', 'push'] as const)
 export interface RemoteContext {
   branch?: string
   upstream?: string
+  /** Full upstream ref (`refs/remotes/<remote>/<branch>`), when known. */
+  upstreamRef?: string
   detached?: boolean
   remotes?: string[]
 }
@@ -57,12 +59,34 @@ function assertSafeArg(value: string, label: string): string {
 }
 
 /**
+ * Split a full upstream ref into its remote and branch.
+ * @param upstreamRef - `refs/remotes/<remote>/<branch>`, or ''.
+ * @param remotes - configured remote names.
+ * @returns the target, or null when the ref does not name a known remote.
+ */
+function parseUpstream(upstreamRef: string, remotes: string[]): { remote: string; branch: string } | null {
+  const prefix = 'refs/remotes/'
+  if (!upstreamRef.startsWith(prefix)) return null
+  const rest = upstreamRef.slice(prefix.length)
+  const matches = remotes
+    .filter((remote) => rest.startsWith(`${remote}/`))
+    .sort((a, b) => b.length - a.length)
+  for (const remote of matches) {
+    const branch = rest.slice(remote.length + 1)
+    if (branch && branch !== 'HEAD') return { remote, branch }
+  }
+  return null
+}
+
+/**
  * Build the `git` argument vector for one remote operation.
  *
  * - fetch updates every remote with `--prune`;
  * - pull merges (`--no-rebase --ff`) or rebases depending on `options.rebase`;
- * - push uses the upstream when there is one, otherwise sets it on the chosen
- *   remote; `--force-with-lease` is only ever passed when the user asked for it.
+ * - push always names the remote and exactly one destination ref, so
+ *   `push.default=matching` or a `remote.<name>.push` setting cannot publish
+ *   other branches behind the user's back; `--force-with-lease` is only ever
+ *   passed when the user asked for it.
  *
  * @param op - operation.
  * @param context - repository state.
@@ -76,6 +100,7 @@ export function buildRemoteCommand(
 ): RemoteCommand {
   const branch = String(context.branch || '').trim()
   const upstream = String(context.upstream || '').trim()
+  const upstreamRef = String(context.upstreamRef || '').trim()
   const remotes = Array.isArray(context.remotes)
     ? context.remotes.filter((name) => typeof name === 'string' && name)
     : []
@@ -97,12 +122,22 @@ export function buildRemoteCommand(
     const args = ['push', '--progress']
     if (options.forceWithLease) args.push('--force-with-lease')
     if (options.tags) args.push('--follow-tags')
-    const remote = remotes.includes('origin') ? 'origin' : remotes[0]
-    if (!upstream) {
-      const name = assertSafeArg(branch || 'HEAD', 'branch name')
-      args.push('--set-upstream', remote, name)
+    if (upstream) {
+      const target = parseUpstream(upstreamRef, remotes)
+      if (!target) {
+        throw new GitError(
+          'cannot determine the upstream remote — push once from a terminal to repair the tracking ref',
+          409,
+        )
+      }
+      // `HEAD:refs/heads/<branch>` updates exactly the tracked branch.
+      args.push(target.remote, `HEAD:refs/heads/${target.branch}`)
+      return { args, label: `push ${target.remote}/${target.branch}` }
     }
-    return { args, label: upstream ? `push ${upstream}` : `push ${remote}` }
+    const remote = remotes.includes('origin') ? 'origin' : remotes[0]
+    const name = assertSafeArg(branch || 'HEAD', 'branch name')
+    args.push('--set-upstream', remote, name)
+    return { args, label: `push ${remote}/${name}` }
   }
 
   throw new GitError('unknown remote operation', 404)

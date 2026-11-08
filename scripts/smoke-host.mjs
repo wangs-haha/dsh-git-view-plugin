@@ -5,7 +5,7 @@
  * Run with `node scripts/smoke-host.mjs` after `pnpm build`.
  */
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -23,6 +23,7 @@ const check = (name, condition, detail = '') => {
 const base = mkdtempSync(join(tmpdir(), 'gv-smoke-'))
 const remote = join(base, 'remote.git')
 const repo = join(base, 'repo')
+const solo = join(base, 'solo')
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' })
 
 try {
@@ -30,6 +31,15 @@ try {
   git(base, 'clone', '-q', remote, repo)
   git(repo, 'config', 'user.email', 'smoke@example.com')
   git(repo, 'config', 'user.name', 'Smoke')
+  git(repo, 'config', 'core.autocrlf', 'false')
+  mkdirSync(solo)
+  git(solo, 'init', '-q', '-b', 'main')
+  git(solo, 'config', 'user.email', 'smoke@example.com')
+  git(solo, 'config', 'user.name', 'Smoke')
+  git(solo, 'config', 'core.autocrlf', 'false')
+  writeFileSync(join(solo, 'root.txt'), 'root\n')
+  git(solo, 'add', '.')
+  git(solo, 'commit', '-qm', 'feat: root commit')
   writeFileSync(join(repo, 'readme.md'), 'one\n')
   git(repo, 'add', '.')
   git(repo, 'commit', '-qm', 'feat: init')
@@ -57,7 +67,12 @@ try {
       return undefined
     },
     connection: { fetch: { register: (def) => routes.set(def.path, def.fetch) } },
-    workspaceRegistry: { list: () => [{ id: 'w1', title: 'smoke', path: repo }] },
+    workspaceRegistry: {
+      list: () => [
+        { id: 'w1', title: 'smoke', path: repo },
+        { id: 'w2', title: 'solo', path: solo },
+      ],
+    },
   })
 
   const read = routes.get('/api/git-view')
@@ -76,7 +91,11 @@ try {
   }
 
   const repos = await get('action=repos')
-  check('repos', repos.repos.length === 1 && repos.repos[0].title === 'smoke')
+  check(
+    'repos',
+    repos.repos.length === 2 && repos.repos.some((entry) => entry.id === 'w1' && entry.title === 'smoke'),
+    JSON.stringify(repos.repos),
+  )
 
   const worktree = await get('action=tree&repo=w1&mode=worktree')
   check(
@@ -126,6 +145,109 @@ try {
     if (snapshot.state !== 'running' && snapshot.state !== 'cancelling') break
   }
   check('push done', snapshot.state === 'done', JSON.stringify(snapshot))
+
+  // A push must only update the current branch, even when git is configured
+  // to push matching branches.
+  git(repo, 'reset', '--hard', '-q')
+  git(repo, 'branch', 'other', 'main')
+  git(repo, 'switch', '-q', 'other')
+  writeFileSync(join(repo, 'other.txt'), 'other\n')
+  git(repo, 'add', '.')
+  git(repo, 'commit', '-qm', 'test: other branch')
+  git(repo, 'switch', '-q', 'main')
+  git(repo, 'config', 'push.default', 'matching')
+  const scopedPush = await post({ repo: 'w1', action: 'remote', op: 'push' })
+  check('scoped push starts', scopedPush.status === 200)
+  let scopedSnapshot = null
+  for (let attempt = 0; attempt < 80; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    scopedSnapshot = await get(`action=remoteJob&repo=w1&id=${scopedPush.body.id}`)
+    if (scopedSnapshot.state !== 'running' && scopedSnapshot.state !== 'cancelling') break
+  }
+  const remoteHeads = execFileSync(
+    'git',
+    ['--git-dir', remote, 'for-each-ref', '--format=%(refname)', 'refs/heads'],
+    { encoding: 'utf8' },
+  )
+    .trim()
+    .split('\n')
+  check(
+    'push does not publish other branches',
+    scopedSnapshot.state === 'done' &&
+      remoteHeads.includes('refs/heads/main') &&
+      !remoteHeads.includes('refs/heads/other'),
+    remoteHeads.join(','),
+  )
+  git(repo, 'config', '--unset', 'push.default')
+  git(repo, 'branch', '-D', 'other')
+
+  // A path with a leading space is a different file from its trimmed twin.
+  writeFileSync(join(repo, ' victim.txt'), 'base\n')
+  writeFileSync(join(repo, 'victim.txt'), 'base\n')
+  git(repo, 'add', '.')
+  git(repo, 'commit', '-qm', 'test: path fixtures')
+  writeFileSync(join(repo, ' victim.txt'), 'selected change\n')
+  writeFileSync(join(repo, 'victim.txt'), 'unselected change\n')
+  const exactRollback = await post({ repo: 'w1', action: 'rollback', paths: [' victim.txt'], deleteAdded: true })
+  check(
+    'rollback targets the exact path',
+    exactRollback.status === 200 && exactRollback.body.paths?.[0] === ' victim.txt',
+    JSON.stringify(exactRollback.body),
+  )
+  const afterRollback = await get('action=status&repo=w1')
+  check(
+    'lookalike file keeps its changes',
+    afterRollback.entries.some((entry) => entry.path === 'victim.txt'),
+    JSON.stringify(afterRollback.entries),
+  )
+  check(
+    'selected file is restored',
+    !afterRollback.entries.some((entry) => entry.path === ' victim.txt'),
+    JSON.stringify(afterRollback.entries),
+  )
+  await post({ repo: 'w1', action: 'rollback', paths: ['victim.txt'], deleteAdded: true })
+
+  const pathCommitHash = git(repo, 'log', '-1', '--format=%H', '--', ' victim.txt').trim()
+  const exactDiff = await get(
+    `action=diff&repo=w1&hash=${pathCommitHash}&path=${encodeURIComponent(' victim.txt')}`,
+  )
+  check(
+    'diff keeps the exact path',
+    exactDiff.text.includes('victim.txt') && exactDiff.path === ' victim.txt',
+    JSON.stringify({ path: exactDiff.path, text: (exactDiff.text || '').slice(0, 80) }),
+  )
+  const badDiff = await get('action=diff&repo=w1&hash=--output=x&path=readme.md')
+  check('diff rejects an option-like hash', typeof badDiff.error === 'string', JSON.stringify(badDiff))
+
+  // A scoped commit read must filter in git, not after the 400-file cap.
+  mkdirSync(join(repo, 'bulk'))
+  for (let index = 0; index < 405; index += 1) {
+    writeFileSync(join(repo, 'bulk', `f${String(index).padStart(3, '0')}.txt`), 'x\n')
+  }
+  writeFileSync(join(repo, 'bulk', 'z-target.txt'), 'target\n')
+  git(repo, 'add', 'bulk')
+  git(repo, 'commit', '-qm', 'test: many files')
+  const bulkHash = git(repo, 'rev-parse', 'HEAD').trim()
+  const scopedCommit = await get(`action=commit&repo=w1&hash=${bulkHash}&path=bulk/z-target.txt`)
+  check(
+    'scoped commit list is filtered before the cap',
+    scopedCommit.files.length === 1 && scopedCommit.files[0].path === 'bulk/z-target.txt',
+    JSON.stringify(scopedCommit.files),
+  )
+
+  // Undoing the root commit on a detached HEAD used to delete .git/HEAD.
+  git(solo, 'switch', '--detach', git(solo, 'rev-list', '--max-parents=0', 'HEAD').trim())
+  const detachedUndo = await post({ repo: 'w2', action: 'history', op: 'undo' })
+  check('detached root undo is rejected', detachedUndo.status === 409, JSON.stringify(detachedUndo.body))
+  check('rejected undo leaves HEAD in place', existsSync(join(solo, '.git', 'HEAD')))
+  git(solo, 'switch', '-q', 'main')
+  const attachedUndo = await post({ repo: 'w2', action: 'history', op: 'undo' })
+  check('attached root undo succeeds', attachedUndo.status === 200, JSON.stringify(attachedUndo.body))
+  check(
+    'attached root undo keeps a symbolic HEAD',
+    git(solo, 'symbolic-ref', '--short', 'HEAD').trim() === 'main',
+  )
+  check('attached root undo keeps the files', existsSync(join(solo, 'root.txt')))
 
   const fetch = await post({ repo: 'w1', action: 'remote', op: 'fetch' })
   check('fetch starts', fetch.status === 200)

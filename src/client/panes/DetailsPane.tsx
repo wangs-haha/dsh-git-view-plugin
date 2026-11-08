@@ -38,7 +38,7 @@ export function DetailsPane(props: DetailsPaneProps): React.ReactElement {
   const spinner = h(Spinner, { label: t('loadingDetail') })
 
   let body: React.ReactNode = null
-  if (loading && !details) {
+  if (!details && (loading || (commit && !error))) {
     body = spinner
   } else if (!commit && !details) {
     body = h(

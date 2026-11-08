@@ -98,4 +98,13 @@ export function apply(ctx: HostContext): void {
       }),
     'git-view: write route',
   )
+
+  // Remote jobs outlive the request that started them, so they must be tied to
+  // the plugin lifecycle: dispose stops their children and releases the locks.
+  ctx.effect(
+    () => () => {
+      void remote.dispose()
+    },
+    'git-view: remote jobs',
+  )
 }
