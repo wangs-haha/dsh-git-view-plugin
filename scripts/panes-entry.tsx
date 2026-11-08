@@ -18,8 +18,9 @@ import { RollbackDialog } from '../src/client/ui/RollbackDialog.js'
 import { ResizeHandle } from '../src/client/ui/ResizeHandle.js'
 import { Spinner } from '../src/client/ui/Spinner.js'
 import type { CommitRow, CommitDetails, GitRepo, LogPayload, RepoState, StatusEntry } from '../src/client/types.js'
+import { zh } from '../src/client/i18n.js'
 
-const t = (key: string) => key
+const t = (key: string) => (zh as Record<string, string>)[key] || key
 const noop = () => {}
 
 const repo: GitRepo = { id: 'w1', title: 'demo', path: '/tmp/demo', root: '/tmp/demo' }

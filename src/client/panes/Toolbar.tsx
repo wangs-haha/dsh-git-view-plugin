@@ -75,7 +75,12 @@ export function Toolbar(props: ToolbarProps): React.ReactElement {
   return h(
     'div',
     { className: 'gv-toolbar' },
-    h('div', { className: 'gv-brand' }, h(IconGraphMark, { size: 15 }), h('span', null, t('panel'))),
+    h(
+      'div',
+      { className: 'gv-brand' },
+      h('span', { className: 'gv-brand-icon', 'aria-hidden': true }, h(IconGraphMark, { size: 14 })),
+      h('span', { className: 'gv-brand-title' }, t('panel')),
+    ),
     h('span', { className: 'gv-divider', 'aria-hidden': true }),
     h(Dropdown, {
       t,

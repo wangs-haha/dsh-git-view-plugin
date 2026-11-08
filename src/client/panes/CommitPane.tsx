@@ -122,11 +122,12 @@ export function GraphCell({ row, width }: { row: GraphRow; width: number }): Rea
   parts.push(
     h('circle', {
       key: 'node',
+      className: 'gv-graph-node',
       cx: centerX,
       cy: centerY,
       r: 4,
       fill: row.color,
-      stroke: 'var(--dsw-alias-bg-base)',
+      stroke: 'var(--gv-bg)',
       strokeWidth: 1.5,
     }),
   )

@@ -164,6 +164,9 @@ export function DetailsPane(props: DetailsPaneProps): React.ReactElement {
             details.files.map((entry) => {
               const additions = entry.additions ?? 0
               const deletions = entry.deletions ?? 0
+              const lastSlash = entry.path.lastIndexOf('/')
+              const fileDir = lastSlash >= 0 ? entry.path.slice(0, lastSlash + 1) : ''
+              const fileName = lastSlash >= 0 ? entry.path.slice(lastSlash + 1) : entry.path
               return h(
                 'button',
                 {
@@ -175,7 +178,12 @@ export function DetailsPane(props: DetailsPaneProps): React.ReactElement {
                 },
                 h('span', { className: `gv-status ${statusClass(entry.status)}` }, entry.status || '?'),
                 h(FileIcon, { name: entry.path, size: 13 }),
-                h('span', { className: 'gv-file-path' }, entry.path),
+                h(
+                  'span',
+                  { className: 'gv-file-path', title: entry.path },
+                  fileDir ? h('span', { className: 'gv-file-dir' }, fileDir) : null,
+                  h('span', { className: 'gv-file-name' }, fileName),
+                ),
                 entry.binary
                   ? h('span', { className: 'gv-file-stat gv-file-binary' }, t('binary'))
                   : additions > 0 || deletions > 0
