@@ -1,31 +1,15 @@
-/**
- * Build the plugin artifacts at the package root, which is where the DSH loader
- * expects them:
- *
- * - `index.js`   the Host half (one ESM bundle, Node built-ins external)
- * - `client.js`  the browser half, wrapped in the module-loader factory so
- *                `require('react')` resolves against the page runtime.
- *
- * The client bundle also carries a build marker, which the panel uses to notice
- * that the page is still running an older build and reload itself (see
- * `src/client/selfcheck.ts`).
- *
- * Sources live in `src/`; both files are generated and should not be edited by
- * hand. Run `pnpm build`.
- */
+/** Build the browser body in memory: never clear another script's build output. */
+import { readFile, writeFile } from 'node:fs/promises'
 import { build } from 'esbuild'
-import { readFile, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { bundleCommonJS } from './lib/bundle.mjs'
 
-const root = dirname(fileURLToPath(import.meta.url))
-const out = (name) => join(root, '..', name)
-const pluginId = '@local/dsh-git-view'
-/** Unique per build: two builds of identical sources still differ. */
+const out = (name) => fileURLToPath(new URL(`../${name}`, import.meta.url))
+const { name: pluginId } = JSON.parse(await readFile(out('package.json'), 'utf8'))
+/** Unique per build, even when the sources are identical. */
 const buildMarker = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
 
-await rm(out('build'), { recursive: true, force: true })
-
+// The DSH loader expects both bundles at the package root, not in dist/.
 await build({
   entryPoints: [out('src/host/index.ts')],
   outfile: out('index.js'),
@@ -38,31 +22,18 @@ await build({
   logLevel: 'warning',
 })
 
-await build({
-  entryPoints: [out('src/client/index.tsx')],
-  outfile: out('build/client.body.js'),
-  bundle: true,
+// React stays external and is supplied by the host page's module loader.
+const body = await bundleCommonJS(out('src/client/index.tsx'), {
+  platform: 'browser',
+  target: ['es2020'],
   define: {
     __GV_BUILD__: JSON.stringify(buildMarker),
     __GV_PLUGIN_ID__: JSON.stringify(pluginId),
   },
-  platform: 'browser',
-  format: 'cjs',
-  target: ['es2020'],
-  jsx: 'transform',
-  external: ['react', 'react-dom'],
-  charset: 'utf8',
-  logLevel: 'warning',
 })
-
-const body = await readFile(out('build/client.body.js'), 'utf8')
-const indented = body
-  .split('\n')
-  .map((line) => (line ? `    ${line}` : line))
-  .join('\n')
-
+const indented = body.split('\n').map((line) => (line ? `    ${line}` : line)).join('\n')
 const wrapped = `window.__ModuleLoader__.load({
-  id: '${pluginId}',
+  id: ${JSON.stringify(pluginId)},
   factory(require) {
     const module = { exports: {} };
     const exports = module.exports;
@@ -73,5 +44,4 @@ ${indented}
 `
 
 await writeFile(out('client.js'), wrapped, 'utf8')
-await rm(out('build'), { recursive: true, force: true })
 console.log(`built index.js and client.js (client build ${buildMarker})`)

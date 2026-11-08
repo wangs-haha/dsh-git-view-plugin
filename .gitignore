@@ -1,9 +1,19 @@
-node_modules/
-.idea/
-.vscode/
+# Dependencies and regenerable local output
+/node_modules/
+/build/
+/coverage/
+*.tsbuildinfo
 *.log
 *.tgz
+
+# Local credentials and machine-specific overrides
+.env
+.env.*
+!.env.example
+*.local
+
+# Editor and operating-system files
+.idea/
+.vscode/
 .DS_Store
 Thumbs.db
-build/
-

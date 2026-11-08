@@ -63,142 +63,171 @@ export function DetailsPane(props: DetailsPaneProps): React.ReactElement {
       null,
       h(
         'div',
-        { className: 'gv-detail-hashrow' },
-        h('code', { className: 'gv-detail-hash' }, details.shortHash),
+        { className: 'gv-card gv-detail-card' },
         h(
-          'button',
-          {
-            type: 'button',
-            className: 'gv-icon-button gv-copy',
-            title: t('copyHash'),
-            'aria-label': t('copyHash'),
-            onClick: () => onCopy(details.hash),
-          },
-          h(IconCopy, { size: 13 }),
-        ),
-        copied ? h('span', { className: 'gv-copied' }, t('copied')) : null,
-      ),
-      commit && commit.refs.length
-        ? h(
+          'div',
+          { className: 'gv-card-body' },
+          h(
             'div',
-            { className: 'gv-detail-refs' },
-            commit.refs.map((entry, index) =>
-              h(RefChip, { key: `${entry.kind}-${entry.name}-${index}`, entry }),
+            { className: 'gv-detail-hashrow' },
+            h('code', { className: 'gv-detail-hash' }, details.shortHash),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'gv-icon-button gv-copy',
+                title: t('copyHash'),
+                'aria-label': t('copyHash'),
+                onClick: () => onCopy(details.hash),
+              },
+              h(IconCopy, { size: 13 }),
             ),
-          )
-        : null,
-      h('div', { className: 'gv-detail-subject' }, details.subject || '(no subject)'),
-      details.message && details.message.split(/\r?\n/).length > 1
-        ? h(
-            'pre',
-            { className: 'gv-detail-message' },
-            details.message.split(/\r?\n/).slice(1).join('\n').trim(),
-          )
-        : null,
-      h(
-        'dl',
-        { className: 'gv-meta' },
-        h('dt', null, t('author')),
-        h(
-          'dd',
-          null,
-          details.author.name,
-          h('span', { className: 'gv-meta-mail' }, ` <${details.author.email}>`),
-        ),
-        h('dt', null, t('date')),
-        h('dd', null, fullDate(details.date)),
-        details.committer && details.committer.name !== details.author.name
-          ? h(React.Fragment, null, h('dt', null, t('committer')), h('dd', null, details.committer.name))
-          : null,
-        details.parents.length ? h('dt', null, t('parents')) : null,
-        details.parents.length
-          ? h(
-              'dd',
-              { className: 'gv-parents' },
-              details.parents.map((parentHash) =>
-                h(
-                  'button',
-                  {
-                    key: parentHash,
-                    type: 'button',
-                    className: 'gv-parent',
-                    title: parentHash,
-                    onClick: () => onSelectHash(parentHash),
-                  },
-                  parentHash.slice(0, 7),
+            copied ? h('span', { className: 'gv-copied' }, t('copied')) : null,
+          ),
+          commit && commit.refs.length
+            ? h(
+                'div',
+                { className: 'gv-detail-refs' },
+                commit.refs.map((entry, index) =>
+                  h(RefChip, { key: `${entry.kind}-${entry.name}-${index}`, entry }),
+                ),
+              )
+            : null,
+          h('div', { className: 'gv-detail-subject' }, details.subject || '(no subject)'),
+          details.message && details.message.split(/\r?\n/).length > 1
+            ? h(
+                'pre',
+                { className: 'gv-detail-message' },
+                details.message.split(/\r?\n/).slice(1).join('\n').trim(),
+              )
+            : null,
+          actions.length === 0
+            ? null
+            : h(
+                'div',
+                { className: 'gv-detail-actions' },
+                actions.map(({ op, label, danger }) =>
+                  h(
+                    'button',
+                    {
+                      key: op,
+                      type: 'button',
+                      className: `gv-action-chip${danger ? ' gv-action-chip-danger' : ''}`,
+                      title: t(historyHintKey(op)),
+                      onClick: () => onHistory(op),
+                    },
+                    label,
+                  ),
                 ),
               ),
-            )
-          : null,
+        ),
       ),
-      actions.length === 0
-        ? null
-        : h(
-            'div',
-            { className: 'gv-detail-actions' },
-            actions.map(({ op, label, danger }) =>
-              h(
-                'button',
-                {
-                  key: op,
-                  type: 'button',
-                  className: `gv-action-chip${danger ? ' gv-action-chip-danger' : ''}`,
-                  title: t(historyHintKey(op)),
-                  onClick: () => onHistory(op),
-                },
-                label,
-              ),
-            ),
-          ),
       h(
         'div',
-        { className: 'gv-section-title' },
-        h('span', null, `${t('files')} · ${details.files.length} ${t('fileCountUnit')}`),
-        scope ? h('span', { className: 'gv-filter-note', title: scope }, t('filteredBy')) : null,
-      ),
-      details.files.length === 0
-        ? h('div', { className: 'gv-muted' }, scope ? t('noFilesInScope') : t('noFiles'))
-        : h(
-            'div',
-            { className: 'gv-files' },
-            details.files.map((entry) => {
-              const additions = entry.additions ?? 0
-              const deletions = entry.deletions ?? 0
-              const lastSlash = entry.path.lastIndexOf('/')
-              const fileDir = lastSlash >= 0 ? entry.path.slice(0, lastSlash + 1) : ''
-              const fileName = lastSlash >= 0 ? entry.path.slice(lastSlash + 1) : entry.path
-              return h(
-                'button',
-                {
-                  key: `${entry.status}-${entry.path}`,
-                  type: 'button',
-                  className: 'gv-file',
-                  title: `${statusLabel(entry.status, t)} · ${entry.path}\n${t('compareHint')}`,
-                  onClick: () => onCompare(entry),
-                },
-                h('span', { className: `gv-status ${statusClass(entry.status)}` }, entry.status || '?'),
-                h(FileIcon, { name: entry.path, size: 13 }),
-                h(
-                  'span',
-                  { className: 'gv-file-path', title: entry.path },
-                  fileDir ? h('span', { className: 'gv-file-dir' }, fileDir) : null,
-                  h('span', { className: 'gv-file-name' }, fileName),
-                ),
-                entry.binary
-                  ? h('span', { className: 'gv-file-stat gv-file-binary' }, t('binary'))
-                  : additions > 0 || deletions > 0
-                    ? h(
-                        'span',
-                        { className: 'gv-file-stat' },
-                        additions > 0 ? h('span', { className: 'gv-add' }, `+${additions}`) : null,
-                        additions > 0 && deletions > 0 ? ' ' : null,
-                        deletions > 0 ? h('span', { className: 'gv-del' }, `-${deletions}`) : null,
-                      )
-                    : null,
-                h('span', { className: 'gv-file-compare', 'aria-hidden': true }, h(IconCompare, { size: 12 })),
-              )
-            }),
+        { className: 'gv-card gv-detail-card' },
+        h(
+          'div',
+          { className: 'gv-card-head' },
+          h('span', { className: 'gv-card-title' }, `${t('author')} · ${t('date')}`),
+        ),
+        h(
+          'div',
+          { className: 'gv-card-body' },
+          h(
+            'dl',
+            { className: 'gv-meta' },
+            h('dt', null, t('author')),
+            h(
+              'dd',
+              null,
+              details.author.name,
+              h('span', { className: 'gv-meta-mail' }, ` <${details.author.email}>`),
+            ),
+            h('dt', null, t('date')),
+            h('dd', null, fullDate(details.date)),
+            details.committer && details.committer.name !== details.author.name
+              ? h(React.Fragment, null, h('dt', null, t('committer')), h('dd', null, details.committer.name))
+              : null,
+            details.parents.length ? h('dt', null, t('parents')) : null,
+            details.parents.length
+              ? h(
+                  'dd',
+                  { className: 'gv-parents' },
+                  details.parents.map((parentHash) =>
+                    h(
+                      'button',
+                      {
+                        key: parentHash,
+                        type: 'button',
+                        className: 'gv-parent',
+                        title: parentHash,
+                        onClick: () => onSelectHash(parentHash),
+                      },
+                      parentHash.slice(0, 7),
+                    ),
+                  ),
+                )
+              : null,
           ),
+        ),
+      ),
+      h(
+        'div',
+        { className: 'gv-card gv-detail-card' },
+        h(
+          'div',
+          { className: 'gv-card-head' },
+          h('span', { className: 'gv-card-title' }, `${t('files')} · ${details.files.length} ${t('fileCountUnit')}`),
+          scope ? h('span', { className: 'gv-filter-note', title: scope }, t('filteredBy')) : null,
+        ),
+        h(
+          'div',
+          { className: 'gv-card-body' },
+          details.files.length === 0
+            ? h('div', { className: 'gv-muted' }, scope ? t('noFilesInScope') : t('noFiles'))
+            : h(
+                'div',
+                { className: 'gv-files' },
+                details.files.map((entry) => {
+                  const additions = entry.additions ?? 0
+                  const deletions = entry.deletions ?? 0
+                  const lastSlash = entry.path.lastIndexOf('/')
+                  const fileDir = lastSlash >= 0 ? entry.path.slice(0, lastSlash + 1) : ''
+                  const fileName = lastSlash >= 0 ? entry.path.slice(lastSlash + 1) : entry.path
+                  return h(
+                    'button',
+                    {
+                      key: `${entry.status}-${entry.path}`,
+                      type: 'button',
+                      className: 'gv-file',
+                      title: `${statusLabel(entry.status, t)} · ${entry.path}\n${t('compareHint')}`,
+                      onClick: () => onCompare(entry),
+                    },
+                    h('span', { className: `gv-status ${statusClass(entry.status)}` }, entry.status || '?'),
+                    h(FileIcon, { name: entry.path, size: 13 }),
+                    h(
+                      'span',
+                      { className: 'gv-file-path', title: entry.path },
+                      fileDir ? h('span', { className: 'gv-file-dir' }, fileDir) : null,
+                      h('span', { className: 'gv-file-name' }, fileName),
+                    ),
+                    entry.binary
+                      ? h('span', { className: 'gv-file-stat gv-file-binary' }, t('binary'))
+                      : additions > 0 || deletions > 0
+                        ? h(
+                            'span',
+                            { className: 'gv-file-stat' },
+                            additions > 0 ? h('span', { className: 'gv-add' }, `+${additions}`) : null,
+                            additions > 0 && deletions > 0 ? ' ' : null,
+                            deletions > 0 ? h('span', { className: 'gv-del' }, `-${deletions}`) : null,
+                          )
+                        : null,
+                    h('span', { className: 'gv-file-compare', 'aria-hidden': true }, h(IconCompare, { size: 12 })),
+                  )
+                }),
+              ),
+        ),
+      ),
     )
   }
 

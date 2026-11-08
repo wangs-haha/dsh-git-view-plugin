@@ -1,0 +1,2 @@
+# Dependency installation is explicit; running a script must not relink node_modules.
+verifyDepsBeforeRun: false

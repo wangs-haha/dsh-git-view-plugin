@@ -1,27 +1,18 @@
 # openidea 借鉴分析与 dsh-git-view 优化方案
 
+> **历史归档**：本文记录 0.2–0.4 阶段的调研与提案，功能状态、文件路径和验证结论可能过时；不代表当前实现或已承诺的计划。现行信息见 [文档索引](../README.md)。
+
 > 调研对象：<https://github.com/l0ng-ai/openidea>（Apache-2.0，IntelliJ IDEA 风格、Rust + Tauri 的 IDE）
 > 对标对象：本仓库 `dsh-git-view-plugin` v0.2.0（DSH Web 的 IntelliJ 风格 Git 面板）
-> 调研方式：本地 sparse clone（`D:\data\temp\openidea-src`，3862 个文件），只读 `src/features/vcs`（前端 106 个文件）、`crates/ide-vcs/src`（Rust VCS 引擎）、`crates/ide-host/src/ops/vcs*`（IPC 层）。本文引用的路径均可在该 clone 中核对。
+> 调研方式：本地 sparse clone，只读 `src/features/vcs`、`crates/ide-vcs/src` 与 `crates/ide-host/src/ops/vcs*`。本文的上游路径为调研时版本，不保证与上游当前版本一致。
 
 > **版本说明（0.5.0）**：源码已迁移到 `src/`——Host 是 TypeScript 服务类，Client 是 React + TS 组件，构建产物为根目录 `index.js` / `client.js`。本文写于 0.4.0 及之前，文中出现的 `index.js`、`git-data.js`、`git-ops.js`、`client.js` 现在分别对应 `src/host/routes.ts`、`src/host/data.ts`、`src/host/ops.ts`、`src/client/app.tsx` 与 `src/client/panes/`。
 
 ---
 
-## 0. 本次实际做了什么
+## 0. 调研背景
 
-### 0.1 插件安装（已完成）
-
-| 步骤 | 结果 |
-| --- | --- |
-| 首次 `install_bundle` | 失败：`ERR_PNPM_UNEXPECTED_STORE` —— profile 的 `node_modules` 由 pnpm 10 的 store（`store\v10`）链接，而 DSH 运行时自带 pnpm 11.28.5 要用 `store\v11` |
-| 修复 | 备份 `package.json` / `pnpm-lock.yaml` 后，用运行时 pnpm 11 在 `~\.dsh\profiles\desktop` 执行一次 `pnpm install`，重新链接到 v11 store（仅 1 个依赖 `dsh-find-plugin`，约 1 秒） |
-| 再次 `install_bundle` | `application: applied`，bundle `@local/dsh-git-view@0.2.0`，entryId `include:git-view` |
-| 安装形态 | `node_modules\@local\dsh-git-view` 是 **Junction → `D:\work\code\dsh-git-view-plugin`**，即源码目录被「链接」而非复制：改代码后只需刷新页面，不必重复安装 |
-| 验证 | `plugin_manager list_bundles` 里可见该 bundle 与 `git-view` 行；`Config.listConfigs` 显示 `include:git-view`（`status: absent` = 插件没有声明 Config schema，属正常）；未带凭据请求 `GET /api/git-view?action=repos` 返回 **401 unauthorized**（而不是 404），说明 Host 路由已挂载且受会话鉴权保护 |
-| 待用户操作 | **客户端半边需要刷新一次页面** 才会注册 `sidebar.panellist` 与 `main` 槽位（安装前已打开的页面不会自动出现 Git 图标） |
-
-> 若之后 `pnpm` 再次报 store 不一致，原因同上（PATH 里的 pnpm 10 与运行时 pnpm 11 混用），修复命令固定为：用 `C:\Users\<user>\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe` 执行 `...\dependencies\pnpm\bin\pnpm.mjs install`。
+一次性安装、机器路径与 pnpm store 修复记录已移除；当前开发流程见 [开发文档](../development.md)。
 
 ### 0.2 openidea 的能力密度
 

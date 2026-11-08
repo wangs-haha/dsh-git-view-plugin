@@ -7,28 +7,12 @@
  *
  * Run with `node scripts/smoke-panes.mjs`.
  */
-import { build } from 'esbuild'
-import { readFile, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { bundleCommonJS } from './lib/bundle.mjs'
 
 const root = dirname(fileURLToPath(import.meta.url))
-const bundlePath = join(root, '..', 'build', 'panes-smoke.cjs')
-
-await build({
-  entryPoints: [join(root, 'panes-entry.tsx')],
-  outfile: bundlePath,
-  bundle: true,
-  platform: 'node',
-  format: 'cjs',
-  jsx: 'transform',
-  external: ['react', 'react-dom'],
-  logLevel: 'warning',
-})
-
-const source = await readFile(bundlePath, 'utf8')
-await rm(bundlePath, { force: true })
-await rm(join(root, '..', 'build'), { recursive: true, force: true })
+const source = await bundleCommonJS(join(root, 'panes-entry.tsx'))
 
 globalThis.window = { innerWidth: 1280, innerHeight: 860, addEventListener() {}, removeEventListener() {}, requestAnimationFrame: (run) => run(), localStorage: { getItem: () => null, setItem() {} } }
 globalThis.document = { body: {}, addEventListener() {}, removeEventListener() {}, documentElement: { style: {}, lang: 'zh-CN' }, hidden: false, activeElement: null }
@@ -107,5 +91,3 @@ if (failures.length) {
   process.exit(1)
 }
 console.log('\npane smoke test passed')
-
-

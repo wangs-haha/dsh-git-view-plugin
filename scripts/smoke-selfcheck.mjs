@@ -13,32 +13,18 @@
  *
  * Run with `node scripts/smoke-selfcheck.mjs`.
  */
-import { build } from 'esbuild'
-import { readFile, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { bundleCommonJS } from './lib/bundle.mjs'
 
 const root = dirname(fileURLToPath(import.meta.url))
-const bundlePath = join(root, '..', 'build', 'selfcheck-smoke.cjs')
 const marker = 'test-build-abc123'
-
-await build({
-  entryPoints: [join(root, '..', 'src', 'client', 'selfcheck.ts')],
-  outfile: bundlePath,
-  bundle: true,
-  platform: 'node',
-  format: 'cjs',
-  target: ['node22'],
+const source = await bundleCommonJS(join(root, '..', 'src', 'client', 'selfcheck.ts'), {
   define: {
     __GV_BUILD__: JSON.stringify(marker),
     __GV_PLUGIN_ID__: JSON.stringify('@local/dsh-git-view'),
   },
-  logLevel: 'warning',
 })
-
-const source = await readFile(bundlePath, 'utf8')
-await rm(bundlePath, { force: true })
-await rm(join(root, '..', 'build'), { recursive: true, force: true })
 
 const module = { exports: {} }
 new Function('require', 'module', 'exports', source)((name) => {

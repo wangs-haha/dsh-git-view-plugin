@@ -145,7 +145,7 @@ export function RollbackDialog({
         h(
           'div',
           { className: 'gv-dialog-actions' },
-          h('button', { type: 'button', className: 'gv-button gv-button-ghost', onClick: onClose, disabled: busy }, t('cancel')),
+          h('button', { type: 'button', className: 'gv-button', onClick: onClose, disabled: busy }, t('cancel')),
           h(
             'button',
             {

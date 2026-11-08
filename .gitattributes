@@ -1,0 +1,12 @@
+# Keep text diffs stable across Windows, macOS and Linux.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+
+# Required package-root bundles are generated, not hand-maintained.
+/index.js linguist-generated=true
+/client.js linguist-generated=true
+/pnpm-lock.yaml linguist-generated=true

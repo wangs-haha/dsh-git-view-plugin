@@ -85,7 +85,7 @@
 | `.gv-icon-button` | 22/26px、`--gv-r-sm`、渐变底 + 阴影 | 所有图标按钮；hover 抬升 1px、accent 描边与光晕，active 缩到 0.96 |
 | `.gv-split-grip` | 11×32 胶囊 + 3 个 3px 圆点 | 分栏握把；亮暗都可见（圆点 5.8:1），hover/drag 变 accent 并放大 1.06 |
 
-圆角统一为 `--gv-r-xs/sm/md/lg = 6/8/10/14px`；控件、行、菜单、弹窗都从这一组取值，不再出现 3–12px 的十级混用。
+圆角全面对齐 Ant Design 5.0 规范，统一为 `--gv-r-xs/sm/md/lg = 4/6/8/8px`（对应 antd 的 `borderRadiusSM: 4px`、`borderRadius: 6px`、`borderRadiusLG: 8px`）及胶囊圆角 `--gv-r-pill: 999px`；控件、行、卡片、菜单、弹窗都从这一组取值。
 
 交互底色用渐变而不是纯色，并且**每个渐变都配一条 `background-color` 兜底**（`pnpm run audit` 只读 `background-color` 做合成对比度，渐变本身也不能成为唯一信息来源）：
 
@@ -96,7 +96,20 @@
 --gv-grad-solid:   linear-gradient(180deg, solid 90% + #fff, solid);
 ```
 
-动效统一为 `--gv-dur-fast/.1s`、`--gv-dur/.16s`，只动 `background`、`border`、`box-shadow`、`transform`、`opacity`；`prefers-reduced-motion` 下关闭位移动画。
+动效统一为 `--gv-dur-fast/.1s`、`--gv-dur/.16s`，缓动曲线对齐 Ant Design 5 标准 `cubic-bezier(.645, .045, .355, 1)`；阴影引入 Ant Design 分级微投影 `--gv-shadow-pop/modal/control/card/lift`。`prefers-reduced-motion` 下关闭位移动画。
+
+### 2.6 Ant Design 5.0 规范映射
+
+DSH 宿主环境仅向插件注入 `react` / `react-dom`，不提供 `@ant-design/antd` 运行时。本插件全面复用了 Ant Design 5.0 的设计规范（Design Tokens & Component Specs）：
+
+| 组件规范 | 对应类名 | Ant Design 规范对齐实现 |
+| --- | --- | --- |
+| **Button** | `.gv-button` / `.gv-button-primary` / `.gv-button-danger` / `.gv-sync` | Default 态白底微描边，hover 时边框与文字转 Primary 蓝；Primary 态实底搭配 2px 阴影；Button.Group 相连边框与端部圆角 |
+| **Form / Input** | `.gv-search-input` / `.gv-dialog-input` / `.gv-commit-input` | 6px 圆角（`borderRadius`），hover 边框加深，focus 2px 扩散光晕（`0 0 0 2px var(--gv-accent-tint-strong)`） |
+| **Card** | `.gv-card` / `.gv-card-head` / `.gv-card-title` / `.gv-card-body` | 8px 圆角（`borderRadiusLG`）、浅描边与 `0 1px 2px` 微阴影；已在提交详情页重构为提交概览、元数据、文件三张卡片 |
+| **Splitter** | `.gv-split` / `.gv-split-grip` | 对齐 Ant Design 5.17+ Splitter 规范：1px 分割线，居中 11×32px 胶囊手柄，hover 与激活态点亮 accent 蓝 |
+| **Modal** | `.gv-dialog` / `.gv-modal` | 对齐 Ant Design Modal：46px 头部、8px 圆角、多层深度阴影（`--gv-shadow-modal`）、右下角标准确认/取消动作栏 |
+| **Tag / Badge** | `.gv-ref` / `.gv-sum-chip` / `.gv-status` | 对齐 Ant Design Tag 预设（blue/green/gold/red），4px 圆角（`borderRadiusSM`），1px 语义描边配 12% 浅底色 |
 
 ## 3. 布局令牌
 
@@ -124,7 +137,7 @@
 - 栏头：34（文件树、详情、弹窗头 44）；次级 28（更改区标题、筛选条）；表头 26；状态栏 24。
 - 控件：小 22、常规 26、工具栏 28；工具栏最小高 44，换行时按 6px 行距与 6px 上下内边距排布。
 - 间距：结构性间距（工具栏、栏头、列表、弹窗、提交区）只用 2/4/6/8/12/16（4 的倍数）；只有小控件内部的视觉微调（例如 13px 图标与输入文字的 27px 左内边距）允许偏离，因为那些值要跟图标尺寸对齐。
-- 圆角只用 4/6/8/12 与胶囊（计数徽章）。
+- 圆角只用 4/6/8 与胶囊（计数徽章，Ant Design 5.0 标准）。
 - 字号只用 10/11/12/13/15（`--gv-fs-xs…xl`），面板基准 12px、行高 1.45；等宽字体统一走 `--gv-mono`。
 - 动效统一 `--gv-dur`（120ms）+ `--gv-ease`，仅对颜色/背景/位移做过渡；`prefers-reduced-motion` 下全部压到 1ms（Spinner 放慢到 2.4s），`forced-colors` 下映射到系统色。
 

@@ -135,7 +135,7 @@ export function ActionDialog({ t, dialog, busy, error, onClose, onConfirm }: Act
       { className: 'gv-dialog-actions' },
       h(
         'button',
-        { type: 'button', className: 'gv-button gv-button-ghost', onClick: onClose, disabled: busy },
+        { type: 'button', className: 'gv-button', onClick: onClose, disabled: busy },
         t('cancel'),
       ),
       h(

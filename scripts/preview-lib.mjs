@@ -5,11 +5,10 @@
  *
  * Used by `preview.mjs` (screenshots) and `audit.mjs` (computed-style checks).
  */
-import { build } from 'esbuild'
 import { existsSync } from 'node:fs'
-import { readFile, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { bundleCommonJS } from './lib/bundle.mjs'
 
 export const root = dirname(fileURLToPath(import.meta.url))
 export const pluginRoot = join(root, '..')
@@ -151,19 +150,7 @@ function installGlobals() {
 
 /** Bundle the fixtures and return the exported cases. */
 export async function loadFixtures() {
-  const bundlePath = join(pluginRoot, 'build', 'preview.cjs')
-  await build({
-    entryPoints: [join(root, 'preview-entry.tsx')],
-    outfile: bundlePath,
-    bundle: true,
-    platform: 'node',
-    format: 'cjs',
-    jsx: 'transform',
-    external: ['react', 'react-dom'],
-    logLevel: 'warning',
-  })
-  const source = await readFile(bundlePath, 'utf8')
-  await rm(bundlePath, { force: true })
+  const source = await bundleCommonJS(join(root, 'preview-entry.tsx'))
   installGlobals()
 
   const module = { exports: {} }

@@ -1,11 +1,9 @@
 /**
  * Publish a rebuilt client bundle to the running DSH page(s).
  *
- * DSH's `client-hmr` plugin stat-polls every client bundle (500ms) and
- * broadcasts a `rebuilt` frame on `/plugins/events` when a bundle's
- * mtime/ctime/size changes; the page then reloads that plugin without a manual
- * refresh. So after `pnpm build`, touching `client.js` is enough to make the
- * open panel pick up the new code.
+ * This is a diagnostic for an existing host watcher, not a guarantee that HMR
+ * is enabled. It never reloads the Host module. Verify the installation target
+ * and the running host's watcher before expecting automatic page updates.
  *
  * `node scripts/reload.mjs [--wait]`
  *
@@ -15,14 +13,22 @@
  */
 import { statSync, utimesSync } from 'node:fs'
 import http from 'node:http'
+import https from 'node:https'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { reloadTarget } from './lib/reload-target.mjs'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const bundle = join(root, 'client.js')
 const pluginId = '@local/dsh-git-view'
 const wait = process.argv.includes('--wait')
-const origin = (process.env.DSH_ORIGIN || process.env.DSH_WEB_URL || 'http://127.0.0.1:50537').replace(/\/$/, '')
+let endpoint
+try {
+  endpoint = reloadTarget(process.env.DSH_ORIGIN || process.env.DSH_WEB_URL)
+} catch (error) {
+  console.error(error.message)
+  process.exit(1)
+}
 
 const before = statSync(bundle)
 console.log(`bundle: ${bundle}`)
@@ -31,8 +37,9 @@ console.log(`  ${before.size} bytes, mtime ${before.mtime.toLocaleString()}`)
 /** Read the revision the host published for this plugin, then stop listening. */
 function watchPublished(ms) {
   return new Promise((resolve) => {
-    const request = http.get(
-      `${origin}/plugins/events`,
+    const transport = endpoint.protocol === 'https:' ? https : http
+    const request = transport.get(
+      endpoint,
       { headers: { accept: 'text/event-stream' } },
       (response) => {
         if (response.statusCode !== 200) {
@@ -87,5 +94,5 @@ const pending = wait ? watchPublished(4000) : Promise.resolve()
 await new Promise((resolve) => setTimeout(resolve, wait ? 600 : 0))
 const now = new Date()
 utimesSync(bundle, now, now)
-console.log(`touched at ${now.toLocaleTimeString()}; DSH polls every 500ms`)
+console.log(`touched at ${now.toLocaleTimeString()}; automatic updates require an active host watcher`)
 await pending
